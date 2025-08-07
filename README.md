@@ -60,10 +60,13 @@ The backend interfaces with the FOUND binary using the following command structu
 
 ## Deployment on Render.com
 
-### Method 1: Using render.yaml (Recommended)
+### Quick Setup
 1. Push your code to GitHub
 2. Connect your repository to Render.com
 3. The `render.yaml` file will automatically configure the deployment
+4. Your app will be live at `https://your-app-name.onrender.com`
+
+**📖 For detailed deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md)**
 
 ### Method 2: Manual Setup
 1. Create a new Web Service on Render.com
