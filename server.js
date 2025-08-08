@@ -74,6 +74,7 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
         // Get manual input values if provided
         const manualFocalLength = req.body.manualFocalLength ? parseFloat(req.body.manualFocalLength) : null;
         const manualPixelSize = req.body.manualPixelSize ? parseFloat(req.body.manualPixelSize) : null;
+        const planetaryRadius = req.body.planetaryRadius ? parseFloat(req.body.planetaryRadius) : null;
 
         // Extract EXIF data with better Apple support
         const exifData = await extractExifData(imagePath);
@@ -95,18 +96,20 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
                 success: false,
                 ...response,
                 needsManualInput: true,
+                planetaryRadius: planetaryRadius,
                 error: 'Unable to extract required camera specifications from image. Please provide manual input.'
             });
         }
 
         // Run FOUND binary (if it exists)
         try {
-            const distance = await runFoundBinary(imagePath, cameraSpecs);
+            const distance = await runFoundBinary(imagePath, cameraSpecs, planetaryRadius);
             
             res.json({
                 success: true,
                 ...response,
                 distance: distance,
+                planetaryRadius: planetaryRadius,
                 message: `Distance calculated: ${distance} meters`
             });
         } catch (foundError) {
@@ -115,6 +118,7 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
                 success: false,
                 ...response,
                 distance: null,
+                planetaryRadius: planetaryRadius,
                 error: foundError.message,
                 message: foundError.message
             });
@@ -136,7 +140,7 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
             return res.status(400).json({ error: 'No image file provided' });
         }
 
-        const { focalLength, pixelSize } = req.body;
+        const { focalLength, pixelSize, planetaryRadius } = req.body;
         
         if (!focalLength || !pixelSize) {
             return res.status(400).json({ 
@@ -153,16 +157,19 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
             source: 'manual'
         };
 
-        console.log(`Manual calculation for ${imagePath} with specs:`, cameraSpecs);
+        const parsedPlanetaryRadius = planetaryRadius ? parseFloat(planetaryRadius) : null;
+
+        console.log(`Manual calculation for ${imagePath} with specs:`, cameraSpecs, `planetary radius: ${parsedPlanetaryRadius}`);
 
         try {
-            const distance = await runFoundBinary(imagePath, cameraSpecs);
+            const distance = await runFoundBinary(imagePath, cameraSpecs, parsedPlanetaryRadius);
             
             res.json({
                 success: true,
                 filename: req.file.filename,
                 cameraSpecs: cameraSpecs,
                 distance: distance,
+                planetaryRadius: parsedPlanetaryRadius,
                 message: `Distance calculated: ${distance} meters`
             });
         } catch (foundError) {
@@ -171,6 +178,7 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
                 filename: req.file.filename,
                 cameraSpecs: cameraSpecs,
                 distance: null,
+                planetaryRadius: parsedPlanetaryRadius,
                 error: foundError.message,
                 message: foundError.message
             });
@@ -477,7 +485,7 @@ function estimatePixelSizeFromDimensions(width, height) {
 }
 
 // Run the FOUND binary
-async function runFoundBinary(imagePath, cameraSpecs) {
+async function runFoundBinary(imagePath, cameraSpecs, planetaryRadius = null) {
     return new Promise((resolve, reject) => {
         const foundBinaryPath = './build/bin/found';
         
@@ -496,6 +504,11 @@ async function runFoundBinary(imagePath, cameraSpecs) {
             '--camera-pixel-size', cameraSpecs.pixelSize.toString(),
             '--reference-orientation', '0,0,0'
         ];
+
+        // Add planetary radius if provided
+        if (planetaryRadius && planetaryRadius > 0) {
+            args.push('--planetary-radius', planetaryRadius.toString());
+        }
 
         console.log(`Running: ${foundBinaryPath} ${args.join(' ')}`);
 

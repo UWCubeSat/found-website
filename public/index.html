@@ -224,6 +224,25 @@
         </div>
 
         <div class="main-content">
+            <!-- Planetary Radius Configuration Section -->
+            <div class="config-section" style="background: #e8f5e8; border: 2px solid #27ae60; border-radius: 10px; padding: 20px; margin-bottom: 30px;">
+                <h3 style="color: #27ae60; margin-bottom: 15px;">🌍 Planetary Configuration</h3>
+                <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 200px;">
+                        <label for="planetaryRadius" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">Planetary Radius (m):</label>
+                        <input type="number" id="planetaryRadius" step="0.1" min="0" 
+                               style="width: 100%; padding: 8px; border: 1px solid #27ae60; border-radius: 4px;" 
+                               placeholder="e.g., 6371008.7714 (Earth)" value="6371008.7714">
+                    </div>
+                    <div style="color: #7f8c8d; font-size: 0.9em;">
+                        <strong>Common values:</strong><br>
+                        Earth: 6371008.7714 m<br>
+                        Moon: 1737400 m<br>
+                        Mars: 3389500 m
+                    </div>
+                </div>
+            </div>
+
             <div class="upload-section" id="uploadSection">
                 <h3>Upload or Capture an Image</h3>
                 <p>Select an image file or take a photo with your camera</p>
@@ -266,11 +285,20 @@
                     </div>
                     
                     <div style="margin-bottom: 15px;">
+                        <label for="manualPlanetaryRadius" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">Planetary Radius (m):</label>
+                        <input type="number" id="manualPlanetaryRadius" step="0.1" min="0" 
+                               style="width: 100%; padding: 8px; border: 1px solid #bdc3c7; border-radius: 4px;" 
+                               placeholder="Will use global setting if empty">
+                        <small style="color: #7f8c8d;">Leave empty to use the global planetary radius setting above</small>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px;">
                         <h5 style="color: #34495e; margin-bottom: 10px;">Common Values Reference:</h5>
                         <div style="font-size: 0.9em; color: #7f8c8d;">
                             <strong>iPhone:</strong> Focal Length: 13-26mm, Pixel Size: 1.0-1.9μm<br>
                             <strong>Samsung Galaxy:</strong> Focal Length: 12-26mm, Pixel Size: 1.4-1.8μm<br>
-                            <strong>DSLR/Mirrorless:</strong> Focal Length: 15-85mm+, Pixel Size: 3-6μm
+                            <strong>DSLR/Mirrorless:</strong> Focal Length: 15-85mm+, Pixel Size: 3-6μm<br>
+                            <strong>Planetary Radius:</strong> Earth: 6371008.7714 m, Moon: 1737400 m, Mars: 3389500 m
                         </div>
                     </div>
                     
@@ -297,6 +325,42 @@
 
     <script>
         let selectedFile = null;
+
+        // Initialize planetary radius from localStorage
+        document.addEventListener('DOMContentLoaded', function() {
+            const savedRadius = localStorage.getItem('planetaryRadius');
+            
+            // Check if saved radius is the old short format (just 6371) and update it
+            if (savedRadius && (savedRadius === '6371' || parseFloat(savedRadius) < 10000)) {
+                // Update old short format to full Earth radius
+                document.getElementById('planetaryRadius').value = '6371008.7714';
+                localStorage.setItem('planetaryRadius', '6371008.7714');
+            } else if (savedRadius) {
+                document.getElementById('planetaryRadius').value = savedRadius;
+            } else {
+                // Set default Earth radius in meters if no saved value
+                document.getElementById('planetaryRadius').value = '6371008.7714';
+                localStorage.setItem('planetaryRadius', '6371008.7714');
+            }
+            
+            // Save planetary radius when it changes
+            document.getElementById('planetaryRadius').addEventListener('change', function() {
+                localStorage.setItem('planetaryRadius', this.value);
+            });
+        });
+
+        // Get current planetary radius (from global or manual input)
+        function getPlanetaryRadius(useManual = false) {
+            if (useManual) {
+                const manualValue = document.getElementById('manualPlanetaryRadius').value;
+                if (manualValue && parseFloat(manualValue) > 0) {
+                    return parseFloat(manualValue);
+                }
+            }
+            
+            const globalValue = document.getElementById('planetaryRadius').value;
+            return globalValue && parseFloat(globalValue) > 0 ? parseFloat(globalValue) : null;
+        }
 
         // File input handlers
         document.getElementById('fileInput').addEventListener('change', handleFileSelect);
@@ -344,6 +408,7 @@
             document.getElementById('autoCalculateSection').style.display = 'block';
             document.getElementById('manualFocalLength').value = '';
             document.getElementById('manualPixelSize').value = '';
+            document.getElementById('manualPlanetaryRadius').value = ''; // Reset manual planetary radius
             
             // Show preview
             const reader = new FileReader();
@@ -370,6 +435,12 @@
 
             const formData = new FormData();
             formData.append('image', selectedFile);
+            
+            // Add planetary radius
+            const radius = getPlanetaryRadius();
+            if (radius) {
+                formData.append('planetaryRadius', radius.toString());
+            }
 
             try {
                 const response = await fetch('/api/upload', {
@@ -423,6 +494,12 @@
             formData.append('image', selectedFile);
             formData.append('focalLength', focalLength);
             formData.append('pixelSize', pixelSize);
+            
+            // Add planetary radius (manual input overrides global)
+            const radius = getPlanetaryRadius(true);
+            if (radius) {
+                formData.append('planetaryRadius', radius.toString());
+            }
 
             try {
                 const response = await fetch('/api/calculate-manual', {
@@ -457,6 +534,14 @@
             }
             if (result.cameraSpecs.pixelSize) {
                 document.getElementById('manualPixelSize').value = result.cameraSpecs.pixelSize;
+            }
+            
+            // Pre-fill planetary radius if available in result
+            if (result.planetaryRadius) {
+                document.getElementById('manualPlanetaryRadius').value = result.planetaryRadius;
+            } else {
+                // Clear manual planetary radius to use global setting
+                document.getElementById('manualPlanetaryRadius').value = '';
             }
 
             // Show available camera info
@@ -536,6 +621,14 @@
                     html += '<div class="result-item">';
                     html += '<span class="result-label">Image Resolution:</span>';
                     html += `<span class="result-value">${result.cameraSpecs.imageWidth} × ${result.cameraSpecs.imageHeight}</span>`;
+                    html += '</div>';
+                }
+
+                // Show planetary radius if used
+                if (result.planetaryRadius) {
+                    html += '<div class="result-item">';
+                    html += '<span class="result-label">Planetary Radius:</span>';
+                    html += `<span class="result-value">${result.planetaryRadius} m</span>`;
                     html += '</div>';
                 }
             }
