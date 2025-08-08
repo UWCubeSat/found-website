@@ -552,10 +552,24 @@ async function runFoundBinary(imagePath, cameraSpecs, planetaryRadius = null) {
 
 // Parse distance from FOUND binary output
 function parseDistanceFromOutput(output) {
-    // This will need to be updated based on the actual output format
-    // For now, assume the output contains a number followed by "meters"
-    const match = output.match(/(\d+\.?\d*)\s*meters?/i);
-    return match ? parseFloat(match[1]) : null;
+    // Parse the actual output format: "Distance from Earth: 1.04562e+07 m"
+    const match = output.match(/Distance from Earth:\s*([\d\.e\+\-]+)\s*m/i);
+    if (match) {
+        const distance = parseFloat(match[1]);
+        console.log(`Parsed distance: ${distance} meters`);
+        return distance;
+    }
+    
+    // Fallback: try to find any scientific notation number followed by 'm'
+    const fallbackMatch = output.match(/([\d\.e\+\-]+)\s*m(?:\s|$)/i);
+    if (fallbackMatch) {
+        const distance = parseFloat(fallbackMatch[1]);
+        console.log(`Parsed distance (fallback): ${distance} meters`);
+        return distance;
+    }
+    
+    console.warn('Could not parse distance from output:', output);
+    return null;
 }
 
 // Error handling middleware
