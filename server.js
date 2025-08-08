@@ -14,6 +14,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Add this for form data parsing
 app.use(express.static('public'));
 
 // Create uploads directory if it doesn't exist
@@ -70,17 +71,31 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
         const imagePath = req.file.path;
         console.log(`Processing image: ${imagePath}`);
 
-        // Extract EXIF data
-        const exifData = await exifr.parse(imagePath);
+        // Get manual input values if provided
+        const manualFocalLength = req.body.manualFocalLength ? parseFloat(req.body.manualFocalLength) : null;
+        const manualPixelSize = req.body.manualPixelSize ? parseFloat(req.body.manualPixelSize) : null;
+
+        // Extract EXIF data with better Apple support
+        const exifData = await extractExifData(imagePath);
         console.log('EXIF data extracted:', exifData);
 
         // Extract camera specifications
-        const cameraSpecs = extractCameraSpecs(exifData);
+        const cameraSpecs = extractCameraSpecs(exifData, manualFocalLength, manualPixelSize);
         
+        // Always return camera specs even if incomplete for manual input
+        const response = {
+            filename: req.file.filename,
+            cameraSpecs: cameraSpecs,
+            exifRaw: exifData
+        };
+
+        // Check if we have minimum required data
         if (!cameraSpecs.focalLength || !cameraSpecs.pixelSize) {
-            return res.status(400).json({ 
-                error: 'Unable to extract required camera specifications from image',
-                availableData: cameraSpecs
+            return res.json({ 
+                success: false,
+                ...response,
+                needsManualInput: true,
+                error: 'Unable to extract required camera specifications from image. Please provide manual input.'
             });
         }
 
@@ -90,8 +105,7 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
             
             res.json({
                 success: true,
-                filename: req.file.filename,
-                cameraSpecs: cameraSpecs,
+                ...response,
                 distance: distance,
                 message: `Distance calculated: ${distance} meters`
             });
@@ -99,8 +113,7 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
             // Special handling for FOUND binary errors
             res.json({
                 success: false,
-                filename: req.file.filename,
-                cameraSpecs: cameraSpecs,
+                ...response,
                 distance: null,
                 error: foundError.message,
                 message: foundError.message
@@ -116,77 +129,338 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
     }
 });
 
+// Manual calculation endpoint for when EXIF data is insufficient
+app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No image file provided' });
+        }
+
+        const { focalLength, pixelSize } = req.body;
+        
+        if (!focalLength || !pixelSize) {
+            return res.status(400).json({ 
+                error: 'Both focal length and pixel size are required for manual calculation' 
+            });
+        }
+
+        const imagePath = req.file.path;
+        const cameraSpecs = {
+            focalLength: parseFloat(focalLength),
+            pixelSize: parseFloat(pixelSize),
+            make: 'Manual Input',
+            model: 'Manual Input',
+            source: 'manual'
+        };
+
+        console.log(`Manual calculation for ${imagePath} with specs:`, cameraSpecs);
+
+        try {
+            const distance = await runFoundBinary(imagePath, cameraSpecs);
+            
+            res.json({
+                success: true,
+                filename: req.file.filename,
+                cameraSpecs: cameraSpecs,
+                distance: distance,
+                message: `Distance calculated: ${distance} meters`
+            });
+        } catch (foundError) {
+            res.json({
+                success: false,
+                filename: req.file.filename,
+                cameraSpecs: cameraSpecs,
+                distance: null,
+                error: foundError.message,
+                message: foundError.message
+            });
+        }
+
+    } catch (error) {
+        console.error('Error in manual calculation:', error);
+        res.status(500).json({ 
+            error: 'Failed to process manual calculation',
+            details: error.message 
+        });
+    }
+});
+
+// Enhanced EXIF extraction with better Apple camera support
+async function extractExifData(imagePath) {
+    try {
+        // Use exifr with comprehensive options for better Apple camera support
+        const exifData = await exifr.parse(imagePath, {
+            ifd0: true,        // Basic camera info
+            ifd1: true,        // Thumbnail info  
+            exif: true,        // EXIF data
+            gps: true,         // GPS data
+            interop: true,     // Interoperability
+            makerNote: true,   // Manufacturer specific data (important for Apple)
+            userComment: true, // User comments
+            translateKeys: false, // Keep original key names
+            translateValues: false, // Keep original values
+            reviveValues: false,   // Don't convert values automatically
+            sanitize: false,       // Keep all data
+            mergeOutput: true      // Merge all IFDs into single object
+        });
+        
+        return exifData || {};
+    } catch (error) {
+        console.warn('EXIF extraction failed:', error.message);
+        return {};
+    }
+}
+
 // Extract camera specifications from EXIF data
-function extractCameraSpecs(exifData) {
+function extractCameraSpecs(exifData, manualFocalLength = null, manualPixelSize = null) {
     const specs = {
-        focalLength: null,
-        pixelSize: null,
+        focalLength: manualFocalLength,
+        pixelSize: manualPixelSize,
         make: null,
         model: null,
+        imageWidth: null,
+        imageHeight: null,
+        source: 'manual',
         raw: exifData
     };
 
-    if (exifData) {
-        // Extract focal length (in mm)
-        if (exifData.FocalLength) {
-            specs.focalLength = exifData.FocalLength;
-        } else if (exifData.FocalLengthIn35mmFormat) {
-            specs.focalLength = exifData.FocalLengthIn35mmFormat;
+    if (exifData && Object.keys(exifData).length > 0) {
+        // Extract make and model with various key variations
+        specs.make = exifData.Make || exifData.make || 
+                    exifData['0th']?.Make || exifData['Image Make'] || null;
+        specs.model = exifData.Model || exifData.model || 
+                     exifData['0th']?.Model || exifData['Image Model'] || null;
+
+        // Extract image dimensions
+        specs.imageWidth = exifData.ImageWidth || exifData['Image Width'] || 
+                          exifData.ExifImageWidth || exifData['EXIF ExifImageWidth'] || null;
+        specs.imageHeight = exifData.ImageHeight || exifData['Image Length'] || 
+                           exifData.ExifImageHeight || exifData['EXIF ExifImageHeight'] || null;
+
+        // Extract focal length if not manually provided
+        if (!specs.focalLength) {
+            specs.focalLength = exifData.FocalLength || exifData['EXIF FocalLength'] ||
+                               exifData.FocalLengthIn35mmFormat || exifData['EXIF FocalLengthIn35mmFormat'] ||
+                               exifData['0th']?.FocalLength || null;
+            if (specs.focalLength) {
+                specs.source = 'exif';
+            }
         }
 
-        // Extract pixel size (this is tricky and often requires camera model lookup)
-        // For now, we'll use common values or try to calculate from resolution
-        if (exifData.Make && exifData.Model) {
-            specs.make = exifData.Make;
-            specs.model = exifData.Model;
-            specs.pixelSize = estimatePixelSize(exifData.Make, exifData.Model);
-        }
+        // Extract or estimate pixel size if not manually provided
+        if (!specs.pixelSize) {
+            // Try to get from EXIF first
+            specs.pixelSize = exifData.FocalPlaneXResolution ? 
+                calculatePixelSizeFromResolution(exifData) : null;
+            
+            // If not found, estimate from make/model
+            if (!specs.pixelSize && specs.make && specs.model) {
+                specs.pixelSize = estimatePixelSize(specs.make, specs.model);
+                if (specs.pixelSize && specs.source === 'exif') {
+                    specs.source = 'exif+database';
+                } else if (specs.pixelSize) {
+                    specs.source = 'database';
+                }
+            }
 
-        // If we can't get pixel size from model, try to estimate from image dimensions
-        if (!specs.pixelSize && exifData.ImageWidth && exifData.ImageHeight) {
-            specs.pixelSize = estimatePixelSizeFromDimensions(exifData.ImageWidth, exifData.ImageHeight);
+            // Last resort: estimate from image dimensions
+            if (!specs.pixelSize && specs.imageWidth && specs.imageHeight) {
+                specs.pixelSize = estimatePixelSizeFromDimensions(specs.imageWidth, specs.imageHeight);
+                if (specs.source === 'exif' || specs.source === 'exif+database') {
+                    specs.source += '+dimensions';
+                } else {
+                    specs.source = 'dimensions';
+                }
+            }
         }
     }
 
     return specs;
 }
 
-// Estimate pixel size based on camera make/model
+// Calculate pixel size from EXIF resolution data
+function calculatePixelSizeFromResolution(exifData) {
+    try {
+        const xRes = exifData.FocalPlaneXResolution || exifData['EXIF FocalPlaneXResolution'];
+        const yRes = exifData.FocalPlaneYResolution || exifData['EXIF FocalPlaneYResolution'];
+        const resUnit = exifData.FocalPlaneResolutionUnit || exifData['EXIF FocalPlaneResolutionUnit'] || 2;
+        
+        if (xRes && yRes) {
+            // Convert to micrometers
+            const conversionFactor = resUnit === 3 ? 10000 : 25400; // 3=cm, 2=inches
+            const pixelSizeX = conversionFactor / xRes;
+            const pixelSizeY = conversionFactor / yRes;
+            return (pixelSizeX + pixelSizeY) / 2; // Average of X and Y
+        }
+    } catch (error) {
+        console.warn('Failed to calculate pixel size from resolution:', error.message);
+    }
+    return null;
+}
+
+// Estimate pixel size based on camera make/model (enhanced database)
 function estimatePixelSize(make, model) {
-    // Common pixel sizes for popular cameras (in micrometers)
+    // Comprehensive pixel sizes for popular cameras (in micrometers)
     const cameraDatabase = {
-        'iPhone': {
-            'iPhone 12': 1.7,
-            'iPhone 13': 1.9,
-            'iPhone 14': 1.9,
-            'iPhone 15': 1.9
+        'Apple': {
+            // iPhone models
+            'iPhone 15 Pro Max': 1.12,
+            'iPhone 15 Pro': 1.22,
+            'iPhone 15 Plus': 1.26,
+            'iPhone 15': 1.26,
+            'iPhone 14 Pro Max': 1.22,
+            'iPhone 14 Pro': 1.22,
+            'iPhone 14 Plus': 1.26,
+            'iPhone 14': 1.26,
+            'iPhone 13 Pro Max': 1.9,
+            'iPhone 13 Pro': 1.9,
+            'iPhone 13 mini': 1.7,
+            'iPhone 13': 1.7,
+            'iPhone 12 Pro Max': 1.7,
+            'iPhone 12 Pro': 1.4,
+            'iPhone 12 mini': 1.4,
+            'iPhone 12': 1.4,
+            'iPhone 11 Pro Max': 1.0,
+            'iPhone 11 Pro': 1.0,
+            'iPhone 11': 1.4,
+            'iPhone SE': 1.22,
+            'iPhone XS Max': 1.4,
+            'iPhone XS': 1.4,
+            'iPhone XR': 1.4,
+            'iPhone X': 1.22,
+            'iPhone 8 Plus': 1.22,
+            'iPhone 8': 1.22,
+            'iPhone 7 Plus': 1.22,
+            'iPhone 7': 1.22
         },
         'Samsung': {
-            'Galaxy S21': 1.8,
+            'Galaxy S24 Ultra': 1.4,
+            'Galaxy S24+': 1.4,
+            'Galaxy S24': 1.4,
+            'Galaxy S23 Ultra': 1.4,
+            'Galaxy S23+': 1.4,
+            'Galaxy S23': 1.4,
+            'Galaxy S22 Ultra': 1.8,
+            'Galaxy S22+': 1.8,
             'Galaxy S22': 1.8,
-            'Galaxy S23': 1.8
+            'Galaxy S21 Ultra': 1.8,
+            'Galaxy S21+': 1.8,
+            'Galaxy S21': 1.8,
+            'Galaxy Note 20 Ultra': 1.8,
+            'Galaxy Note 20': 1.8
+        },
+        'Google': {
+            'Pixel 8 Pro': 1.2,
+            'Pixel 8': 1.2,
+            'Pixel 7 Pro': 1.2,
+            'Pixel 7': 1.2,
+            'Pixel 6 Pro': 1.2,
+            'Pixel 6': 1.2,
+            'Pixel 5': 1.4,
+            'Pixel 4': 1.4,
+            'Pixel 3': 1.4
         },
         'Canon': {
             'EOS R5': 4.4,
-            'EOS R6': 6.0
+            'EOS R6': 6.0,
+            'EOS R': 5.4,
+            'EOS 5D Mark IV': 5.4,
+            'EOS 6D Mark II': 6.5,
+            'EOS 90D': 3.2,
+            'EOS M50': 3.7
+        },
+        'Nikon': {
+            'D850': 4.3,
+            'D780': 5.9,
+            'D750': 5.9,
+            'Z7': 4.3,
+            'Z6': 5.9,
+            'Z5': 5.9
+        },
+        'Sony': {
+            'A7R V': 3.8,
+            'A7 IV': 5.9,
+            'A7R IV': 3.8,
+            'A7R III': 4.3,
+            'A7 III': 5.9,
+            'A6700': 3.9,
+            'A6600': 3.9,
+            'A6400': 3.9
         }
     };
 
+    // Clean up make and model strings
+    const cleanMake = make.trim();
+    const cleanModel = model.trim();
+
+    // Find matching make (case insensitive)
     const makeKey = Object.keys(cameraDatabase).find(key => 
-        make.toLowerCase().includes(key.toLowerCase())
+        cleanMake.toLowerCase().includes(key.toLowerCase()) ||
+        key.toLowerCase().includes(cleanMake.toLowerCase())
     );
 
     if (makeKey) {
-        const modelKey = Object.keys(cameraDatabase[makeKey]).find(key =>
-            model.toLowerCase().includes(key.toLowerCase())
-        );
+        // Find matching model
+        const modelKey = Object.keys(cameraDatabase[makeKey]).find(key => {
+            const keyLower = key.toLowerCase();
+            const modelLower = cleanModel.toLowerCase();
+            
+            // Exact match
+            if (keyLower === modelLower) return true;
+            
+            // Model contains the key
+            if (modelLower.includes(keyLower)) return true;
+            
+            // Key contains the model
+            if (keyLower.includes(modelLower)) return true;
+            
+            // For iPhones, handle version matching
+            if (makeKey === 'Apple') {
+                const modelParts = modelLower.replace(/[^\w\s]/g, '').split(/\s+/);
+                const keyParts = keyLower.replace(/[^\w\s]/g, '').split(/\s+/);
+                
+                // Check if key parts are contained in model parts
+                return keyParts.every(keyPart => 
+                    modelParts.some(modelPart => 
+                        modelPart.includes(keyPart) || keyPart.includes(modelPart)
+                    )
+                );
+            }
+            
+            return false;
+        });
+        
         if (modelKey) {
+            console.log(`Found pixel size for ${cleanMake} ${cleanModel}: ${cameraDatabase[makeKey][modelKey]}μm`);
             return cameraDatabase[makeKey][modelKey];
         }
     }
 
-    // Default fallback for smartphones
-    return 1.8;
+    // Fallback values based on make
+    const fallbacks = {
+        'Apple': 1.4,      // Average iPhone pixel size
+        'Samsung': 1.6,    // Average Samsung flagship
+        'Google': 1.3,     // Average Pixel
+        'Canon': 5.0,      // Average Canon DSLR/mirrorless
+        'Nikon': 5.0,      // Average Nikon DSLR/mirrorless  
+        'Sony': 4.5,       // Average Sony mirrorless
+        'Huawei': 1.6,     // Average Huawei flagship
+        'OnePlus': 1.6,    // Average OnePlus
+        'Xiaomi': 1.6      // Average Xiaomi flagship
+    };
+
+    const fallback = Object.keys(fallbacks).find(key => 
+        cleanMake.toLowerCase().includes(key.toLowerCase())
+    );
+
+    if (fallback) {
+        console.log(`Using fallback pixel size for ${cleanMake}: ${fallbacks[fallback]}μm`);
+        return fallbacks[fallback];
+    }
+
+    // Last resort: general smartphone default
+    console.log(`Using default pixel size for unknown camera: ${cleanMake} ${cleanModel}`);
+    return 1.6;
 }
 
 // Estimate pixel size from image dimensions (rough approximation)

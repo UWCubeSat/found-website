@@ -244,7 +244,42 @@
             <div class="preview-section" id="previewSection" style="display: none;">
                 <h3>Image Preview</h3>
                 <img id="imagePreview" class="image-preview" alt="Image preview">
-                <div>
+                
+                <!-- Manual Input Section -->
+                <div id="manualInputSection" style="display: none; margin: 20px 0; padding: 20px; border: 2px solid #f39c12; border-radius: 10px; background-color: #fef9e7;">
+                    <h4 style="color: #e67e22; margin-bottom: 15px;">📝 Manual Camera Specifications</h4>
+                    <p style="color: #8e44ad; margin-bottom: 15px;">EXIF data incomplete. Please provide the following camera specifications:</p>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                        <div>
+                            <label for="manualFocalLength" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">Focal Length (mm):</label>
+                            <input type="number" id="manualFocalLength" step="0.1" min="0.1" max="1000" 
+                                   style="width: 100%; padding: 8px; border: 1px solid #bdc3c7; border-radius: 4px;" 
+                                   placeholder="e.g., 26">
+                        </div>
+                        <div>
+                            <label for="manualPixelSize" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">Pixel Size (μm):</label>
+                            <input type="number" id="manualPixelSize" step="0.01" min="0.1" max="50" 
+                                   style="width: 100%; padding: 8px; border: 1px solid #bdc3c7; border-radius: 4px;" 
+                                   placeholder="e.g., 1.4">
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <h5 style="color: #34495e; margin-bottom: 10px;">Common Values Reference:</h5>
+                        <div style="font-size: 0.9em; color: #7f8c8d;">
+                            <strong>iPhone:</strong> Focal Length: 13-26mm, Pixel Size: 1.0-1.9μm<br>
+                            <strong>Samsung Galaxy:</strong> Focal Length: 12-26mm, Pixel Size: 1.4-1.8μm<br>
+                            <strong>DSLR/Mirrorless:</strong> Focal Length: 15-85mm+, Pixel Size: 3-6μm
+                        </div>
+                    </div>
+                    
+                    <button class="upload-btn" onclick="processImageManual()" style="background: linear-gradient(45deg, #f39c12, #e67e22);">
+                        🔧 Calculate with Manual Input
+                    </button>
+                </div>
+                
+                <div id="autoCalculateSection">
                     <button class="upload-btn" onclick="processImage()">
                         🚀 Calculate Distance
                     </button>
@@ -304,6 +339,12 @@
 
             selectedFile = file;
             
+            // Reset form state
+            document.getElementById('manualInputSection').style.display = 'none';
+            document.getElementById('autoCalculateSection').style.display = 'block';
+            document.getElementById('manualFocalLength').value = '';
+            document.getElementById('manualPixelSize').value = '';
+            
             // Show preview
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -340,6 +381,9 @@
 
                 if (response.ok && result.success) {
                     showResults(result);
+                } else if (result.needsManualInput) {
+                    // Show manual input form
+                    showManualInputForm(result);
                 } else if (result.error === 'you couldn\'t be found') {
                     showError('you couldn\'t be found');
                 } else {
@@ -350,6 +394,97 @@
             } finally {
                 document.getElementById('loadingSection').style.display = 'none';
             }
+        }
+
+        async function processImageManual() {
+            if (!selectedFile) {
+                showError('Please select an image first.');
+                return;
+            }
+
+            const focalLength = document.getElementById('manualFocalLength').value;
+            const pixelSize = document.getElementById('manualPixelSize').value;
+
+            if (!focalLength || !pixelSize) {
+                showError('Please enter both focal length and pixel size.');
+                return;
+            }
+
+            if (focalLength <= 0 || pixelSize <= 0) {
+                showError('Focal length and pixel size must be positive numbers.');
+                return;
+            }
+
+            // Show loading
+            document.getElementById('loadingSection').style.display = 'block';
+            document.getElementById('resultsSection').innerHTML = '';
+
+            const formData = new FormData();
+            formData.append('image', selectedFile);
+            formData.append('focalLength', focalLength);
+            formData.append('pixelSize', pixelSize);
+
+            try {
+                const response = await fetch('/api/calculate-manual', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    showResults(result);
+                } else if (result.error === 'you couldn\'t be found') {
+                    showError('you couldn\'t be found');
+                } else {
+                    showError(result.error || result.message || 'Failed to process image');
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            } finally {
+                document.getElementById('loadingSection').style.display = 'none';
+            }
+        }
+
+        function showManualInputForm(result) {
+            // Hide auto calculate section and show manual input
+            document.getElementById('autoCalculateSection').style.display = 'none';
+            document.getElementById('manualInputSection').style.display = 'block';
+
+            // Pre-fill any available data
+            if (result.cameraSpecs.focalLength) {
+                document.getElementById('manualFocalLength').value = result.cameraSpecs.focalLength;
+            }
+            if (result.cameraSpecs.pixelSize) {
+                document.getElementById('manualPixelSize').value = result.cameraSpecs.pixelSize;
+            }
+
+            // Show available camera info
+            let infoHtml = '<div class="results-section"><h3>📸 Detected Camera Information</h3>';
+            
+            if (result.cameraSpecs.make) {
+                infoHtml += `<div class="result-item">
+                    <span class="result-label">Make:</span>
+                    <span class="result-value">${result.cameraSpecs.make}</span>
+                </div>`;
+            }
+            
+            if (result.cameraSpecs.model) {
+                infoHtml += `<div class="result-item">
+                    <span class="result-label">Model:</span>
+                    <span class="result-value">${result.cameraSpecs.model}</span>
+                </div>`;
+            }
+
+            if (result.cameraSpecs.imageWidth && result.cameraSpecs.imageHeight) {
+                infoHtml += `<div class="result-item">
+                    <span class="result-label">Image Resolution:</span>
+                    <span class="result-value">${result.cameraSpecs.imageWidth} × ${result.cameraSpecs.imageHeight}</span>
+                </div>`;
+            }
+
+            infoHtml += '</div>';
+            document.getElementById('resultsSection').innerHTML = infoHtml;
         }
 
         function showResults(result) {
@@ -387,6 +522,22 @@
                 html += '<span class="result-label">Pixel Size:</span>';
                 html += `<span class="result-value">${result.cameraSpecs.pixelSize || 'Unknown'} μm</span>`;
                 html += '</div>';
+
+                // Show data source
+                if (result.cameraSpecs.source) {
+                    html += '<div class="result-item">';
+                    html += '<span class="result-label">Data Source:</span>';
+                    html += `<span class="result-value">${getSourceDescription(result.cameraSpecs.source)}</span>`;
+                    html += '</div>';
+                }
+
+                // Show image resolution if available
+                if (result.cameraSpecs.imageWidth && result.cameraSpecs.imageHeight) {
+                    html += '<div class="result-item">';
+                    html += '<span class="result-label">Image Resolution:</span>';
+                    html += `<span class="result-value">${result.cameraSpecs.imageWidth} × ${result.cameraSpecs.imageHeight}</span>`;
+                    html += '</div>';
+                }
             }
 
             html += '</div>';
@@ -396,6 +547,20 @@
             }
 
             resultsSection.innerHTML = html;
+        }
+
+        function getSourceDescription(source) {
+            const descriptions = {
+                'manual': '📝 Manual Input',
+                'exif': '📷 EXIF Metadata',
+                'database': '🗃️ Camera Database',
+                'dimensions': '📐 Image Dimensions',
+                'exif+database': '📷 EXIF + Database',
+                'exif+dimensions': '📷 EXIF + Dimensions',
+                'database+dimensions': '🗃️ Database + Dimensions',
+                'exif+database+dimensions': '📷 EXIF + Database + Dimensions'
+            };
+            return descriptions[source] || source;
         }
 
         function showError(message) {
