@@ -6,13 +6,22 @@ services:
     buildCommand: |
       # Install Node.js dependencies
       npm install
-      # Install Python dependencies
-      python3 -m pip install --upgrade pip
-      python3 -m pip install -r requirements.txt
+      # Install Python dependencies with optimizations for Render.com
+      python3 -m pip install --upgrade pip setuptools wheel
+      # Install packages individually with pre-compiled wheels only
+      python3 -m pip install --only-binary=all --no-cache-dir numpy==1.24.3
+      python3 -m pip install --only-binary=all --no-cache-dir pillow==10.0.0
+      python3 -m pip install --only-binary=all --no-cache-dir opencv-python-headless==4.8.0.76
+      python3 -m pip install --only-binary=all --no-cache-dir matplotlib==3.7.2
+      python3 -m pip install --only-binary=all --no-cache-dir scipy==1.11.1
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
       - key: PYTHONPATH
         value: /opt/render/project/src
+      - key: PIP_NO_CACHE_DIR
+        value: "1"
+      - key: PIP_ONLY_BINARY
+        value: ":all:"
     autoDeploy: false
