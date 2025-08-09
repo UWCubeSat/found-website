@@ -586,6 +586,28 @@
                 html += `<div class="error">❌ ${result.error}</div>`;
             }
 
+            // Edge Detection Visualization
+            if (result.edgeDetection && result.edgeDetection.visualization) {
+                html += `</div><div class="results-section"><h3>🔍 Detected Edge Points</h3>`;
+                html += `<div style="text-align: center; margin: 20px 0;">
+                    <img src="data:image/png;base64,${result.edgeDetection.visualization}" 
+                         style="max-width: 100%; max-height: 400px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.1);" 
+                         alt="Edge Detection Visualization">
+                </div>`;
+                html += `<div class="result-item">
+                    <span class="result-label">Edge Points Count:</span>
+                    <span class="result-value">${result.edgeDetection.pointsCount} points</span>
+                </div>`;
+                if (result.edgeDetection.edgePointsFile) {
+                    html += `<div class="result-item">
+                        <span class="result-label">Edge Points File:</span>
+                        <span class="result-value">${result.edgeDetection.edgePointsFile}</span>
+                    </div>`;
+                }
+            }
+
+            html += '</div><div class="results-section"><h3>📷 Camera Specifications</h3>';
+
             // Camera specifications (show even if distance calculation failed)
             if (result.cameraSpecs) {
                 html += '<div class="result-item">';

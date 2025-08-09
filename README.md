@@ -60,20 +60,36 @@ The backend interfaces with the FOUND binary using the following command structu
 
 ## Deployment on Render.com
 
+### Prerequisites for Deployment
+This project uses both Node.js and Python, requiring proper setup of both runtimes:
+- Node.js for the web server
+- Python 3 for edge detection processing
+
 ### Quick Setup
-1. Push your code to GitHub
+1. Push your code to GitHub (ensure `requirements.txt` is included)
 2. Connect your repository to Render.com
 3. The `render.yaml` file will automatically configure the deployment
 4. Your app will be live at `https://your-app-name.onrender.com`
 
 **📖 For detailed deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md)**
 
+### Python Dependencies
+The edge detection feature requires the following Python packages (specified in `requirements.txt`):
+- opencv-python==4.12.0.88
+- numpy==2.0.2  
+- matplotlib==3.9.4
+- scipy==1.13.1
+- pillow==11.3.0
+
 ### Method 2: Manual Setup
 1. Create a new Web Service on Render.com
 2. Connect your GitHub repository
 3. Use the following settings:
    - **Environment**: Node
-   - **Build Command**: `npm install`
+   - **Build Command**: 
+     ```bash
+     npm install && python3 -m pip install --upgrade pip && python3 -m pip install -r requirements.txt
+     ```
    - **Start Command**: `npm start`
    - **Node Version**: 18 or higher
 
@@ -81,6 +97,7 @@ The backend interfaces with the FOUND binary using the following command structu
 Set the following environment variables in Render.com:
 - `NODE_ENV`: `production`
 - `PORT`: `3000` (automatically set by Render)
+- `PYTHONPATH`: `/opt/render/project/src`
 
 ## Project Structure
 ```

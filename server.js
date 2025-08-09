@@ -8,6 +8,10 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 require('dotenv').config();
 
+// Debugging configuration
+const DEBUG_MODE = process.env.DEBUG_MODE === 'true' || process.env.NODE_ENV === 'development';
+const USE_DOCKER_DEBUG = process.env.USE_DOCKER_DEBUG === 'true';
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -61,6 +65,45 @@ app.get('/health', (req, res) => {
     res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// Edge detection endpoint
+app.post('/api/edge-detection', upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No image file provided' });
+        }
+
+        const imagePath = req.file.path;
+        console.log(`Processing edge detection for: ${imagePath}`);
+
+        // Run Python edge detection script
+        const results = await runEdgeDetection(imagePath);
+        
+        if (results.success) {
+            res.json({
+                success: true,
+                filename: req.file.filename,
+                edgePointsCount: results.edge_points_count,
+                visualization: results.visualization,
+                filledImagePath: results.filled_image_path,
+                imageShape: results.image_shape
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: results.error || 'Edge detection failed'
+            });
+        }
+
+    } catch (error) {
+        console.error('Error in edge detection:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to process edge detection',
+            details: error.message 
+        });
+    }
+});
+
 // Upload and process image
 app.post('/api/upload', upload.single('image'), async (req, res) => {
     try {
@@ -101,15 +144,31 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
             });
         }
 
-        // Run FOUND binary (if it exists)
+        // First run edge detection
+        let edgeResults = null;
         try {
-            const distance = await runFoundBinary(imagePath, cameraSpecs, planetaryRadius);
+            console.log('🔍 Running edge detection first...');
+            edgeResults = await runEdgeDetection(imagePath);
+            console.log(`✅ Edge detection completed: ${edgeResults.edge_points_count} points found`);
+        } catch (edgeError) {
+            console.warn('⚠️ Edge detection failed:', edgeError.message);
+            // Continue without edge detection results
+        }
+
+        // Run FOUND binary with edge detection results (if available)
+        try {
+            const distance = await runFoundBinary(imagePath, cameraSpecs, planetaryRadius, edgeResults);
             
             res.json({
                 success: true,
                 ...response,
                 distance: distance,
                 planetaryRadius: planetaryRadius,
+                edgeDetection: edgeResults ? {
+                    pointsCount: edgeResults.edge_points_count,
+                    visualization: edgeResults.visualization,
+                    edgePointsFile: edgeResults.edge_points_file
+                } : null,
                 message: `Distance calculated: ${distance} meters`
             });
         } catch (foundError) {
@@ -119,6 +178,11 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
                 ...response,
                 distance: null,
                 planetaryRadius: planetaryRadius,
+                edgeDetection: edgeResults ? {
+                    pointsCount: edgeResults.edge_points_count,
+                    visualization: edgeResults.visualization,
+                    edgePointsFile: edgeResults.edge_points_file
+                } : null,
                 error: foundError.message,
                 message: foundError.message
             });
@@ -161,8 +225,19 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
 
         console.log(`Manual calculation for ${imagePath} with specs:`, cameraSpecs, `planetary radius: ${parsedPlanetaryRadius}`);
 
+        // First run edge detection
+        let edgeResults = null;
         try {
-            const distance = await runFoundBinary(imagePath, cameraSpecs, parsedPlanetaryRadius);
+            console.log('🔍 Running edge detection for manual calculation...');
+            edgeResults = await runEdgeDetection(imagePath);
+            console.log(`✅ Edge detection completed: ${edgeResults.edge_points_count} points found`);
+        } catch (edgeError) {
+            console.warn('⚠️ Edge detection failed:', edgeError.message);
+            // Continue without edge detection results
+        }
+
+        try {
+            const distance = await runFoundBinary(imagePath, cameraSpecs, parsedPlanetaryRadius, edgeResults);
             
             res.json({
                 success: true,
@@ -170,6 +245,11 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
                 cameraSpecs: cameraSpecs,
                 distance: distance,
                 planetaryRadius: parsedPlanetaryRadius,
+                edgeDetection: edgeResults ? {
+                    pointsCount: edgeResults.edge_points_count,
+                    visualization: edgeResults.visualization,
+                    edgePointsFile: edgeResults.edge_points_file
+                } : null,
                 message: `Distance calculated: ${distance} meters`
             });
         } catch (foundError) {
@@ -179,6 +259,11 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
                 cameraSpecs: cameraSpecs,
                 distance: null,
                 planetaryRadius: parsedPlanetaryRadius,
+                edgeDetection: edgeResults ? {
+                    pointsCount: edgeResults.edge_points_count,
+                    visualization: edgeResults.visualization,
+                    edgePointsFile: edgeResults.edge_points_file
+                } : null,
                 error: foundError.message,
                 message: foundError.message
             });
@@ -484,33 +569,338 @@ function estimatePixelSizeFromDimensions(width, height) {
     }
 }
 
-// Run the FOUND binary
-async function runFoundBinary(imagePath, cameraSpecs, planetaryRadius = null) {
+// Run edge detection Python script
+async function runEdgeDetection(imagePath) {
+    return new Promise((resolve, reject) => {
+        const pythonScript = path.join(__dirname, 'edge_detection.py');
+        
+        // Check if Python script exists
+        if (!fs.existsSync(pythonScript)) {
+            console.log('Edge detection script not found');
+            reject(new Error('Edge detection functionality not available'));
+            return;
+        }
+
+        // Use virtual environment Python if available, otherwise fall back to system python3
+        const venvPython = path.join(__dirname, '.venv', 'bin', 'python3');
+        // In production (like Render.com), use system python3 since venv won't exist
+        const pythonCommand = fs.existsSync(venvPython) && process.env.NODE_ENV !== 'production' 
+            ? venvPython 
+            : 'python3';
+
+        if (DEBUG_MODE) {
+            console.log(`🔍 Running edge detection: ${pythonCommand} ${pythonScript} ${imagePath}`);
+            if (pythonCommand === venvPython) {
+                console.log('✅ Using virtual environment Python');
+            } else {
+                console.log('⚠️  Using system Python (virtual environment not found)');
+            }
+        }
+
+        const child = spawn(pythonCommand, [pythonScript, imagePath]);
+        let output = '';
+        let errorOutput = '';
+
+        // Set a timeout for the edge detection (60 seconds)
+        const timeout = setTimeout(() => {
+            child.kill('SIGKILL');
+            reject(new Error('Edge detection timeout'));
+        }, 60000);
+
+        child.stdout.on('data', (data) => {
+            output += data.toString();
+        });
+
+        child.stderr.on('data', (data) => {
+            errorOutput += data.toString();
+            if (DEBUG_MODE) {
+                console.error('📤 Edge detection STDERR:', data.toString().trim());
+            }
+        });
+
+        child.on('close', (code) => {
+            clearTimeout(timeout);
+            if (DEBUG_MODE) {
+                console.log(`🏁 Edge detection finished with code: ${code}`);
+            }
+            
+            if (code === 0) {
+                try {
+                    const results = JSON.parse(output);
+                    resolve(results);
+                } catch (parseError) {
+                    if (DEBUG_MODE) {
+                        console.error('❌ Failed to parse edge detection output:', output);
+                    }
+                    reject(new Error('Failed to parse edge detection results'));
+                }
+            } else {
+                if (DEBUG_MODE) {
+                    console.error(`❌ Edge detection failed with code ${code}`);
+                    console.error('📋 Error output:', errorOutput);
+                    console.log('📋 Standard output:', output);
+                }
+                reject(new Error('Edge detection script failed'));
+            }
+        });
+
+        child.on('error', (error) => {
+            clearTimeout(timeout);
+            if (DEBUG_MODE) {
+                console.error('❌ Error running edge detection script:', error);
+            }
+            reject(new Error('Failed to run edge detection script'));
+        });
+    });
+}
+
+// Run the FOUND binary (with optional Docker debugging)
+async function runFoundBinary(imagePath, cameraSpecs, planetaryRadius = null, edgeResults = null) {
+    if (USE_DOCKER_DEBUG && DEBUG_MODE) {
+        console.log('🐳 Running FOUND binary in Docker debug mode');
+        return runFoundBinaryInDocker(imagePath, cameraSpecs, planetaryRadius, edgeResults);
+    } else {
+        return runFoundBinaryNative(imagePath, cameraSpecs, planetaryRadius, edgeResults);
+    }
+}
+
+// Run the FOUND binary in Docker container for debugging
+async function runFoundBinaryInDocker(imagePath, cameraSpecs, planetaryRadius = null, edgeResults = null) {
+    return new Promise((resolve, reject) => {
+        // Check if Docker is available
+        const dockerCheck = spawn('docker', ['--version']);
+        
+        dockerCheck.on('error', (error) => {
+            console.error('❌ Docker not found. Falling back to native execution.');
+            runFoundBinaryNative(imagePath, cameraSpecs, planetaryRadius, edgeResults)
+                .then(resolve)
+                .catch(reject);
+            return;
+        });
+
+        dockerCheck.on('close', (code) => {
+            if (code !== 0) {
+                console.error('❌ Docker not available. Falling back to native execution.');
+                runFoundBinaryNative(imagePath, cameraSpecs, planetaryRadius, edgeResults)
+                    .then(resolve)
+                    .catch(reject);
+                return;
+            }
+
+            // Docker is available, proceed with containerized execution
+            executeInDockerContainer(imagePath, cameraSpecs, planetaryRadius, edgeResults, resolve, reject);
+        });
+    });
+}
+
+// Execute FOUND binary inside Docker container
+function executeInDockerContainer(imagePath, cameraSpecs, planetaryRadius, edgeResults, resolve, reject) {
+    const workspaceDir = path.resolve(__dirname);
+    const containerImagePath = `/workspace${imagePath.replace(workspaceDir, '')}`;
+    const containerBinaryPath = '/workspace/build/bin/found';
+
+    const args = [
+        'run', '--rm',
+        '--platform', 'linux/amd64',
+        '-v', `${workspaceDir}:/workspace`,
+        '-w', '/workspace',
+        'ubuntu:latest',
+        'bash', '-c', [
+            '# Set non-interactive frontend and timezone',
+            'export DEBIAN_FRONTEND=noninteractive',
+            'export TZ=UTC',
+            '',
+            '# Quick install of essential debugging tools only',
+            'apt-get update -qq > /dev/null 2>&1',
+            'apt-get install -y -qq --no-install-recommends file strace > /dev/null 2>&1 || echo "Some tools failed to install"',
+            '',
+            '# Check binary and dependencies',
+            'echo "🔍 Binary info:"',
+            `file ${containerBinaryPath} 2>/dev/null || echo "❌ Binary type unknown"`,
+            `ls -la ${containerBinaryPath} || echo "❌ Binary not accessible"`,
+            '',
+            '# Check if binary is executable',
+            `if [ -x "${containerBinaryPath}" ]; then`,
+            '    echo "✅ Binary is executable"',
+            '    echo "🔍 Checking dependencies:"',
+            `    ldd ${containerBinaryPath} 2>&1 || echo "⚠️  Could not check dependencies (likely static binary)"`,
+            'else',
+            '    echo "❌ Binary is not executable"',
+            '    exit 1',
+            'fi',
+            '',
+            '# Check input image',
+            'echo "🔍 Input image info:"',
+            `file ${containerImagePath} 2>/dev/null || echo "❌ Image file type unknown"`,
+            `ls -la ${containerImagePath} || echo "❌ Image not accessible"`,
+            '',
+            '# Run the FOUND binary',
+            'echo "🚀 Running FOUND binary..."',
+            'echo "Command line arguments:"',
+            `echo "${buildFoundCommand(containerBinaryPath, containerImagePath, cameraSpecs, planetaryRadius, edgeResults)}"`,
+            '',
+            '# Execute the binary',
+            'echo "📊 Executing binary..."',
+            `${buildFoundCommand(containerBinaryPath, containerImagePath, cameraSpecs, planetaryRadius, edgeResults)}`
+        ].join('\n')
+    ];
+
+    console.log('🐳 Starting Docker container for debugging...');
+    console.log(`📁 Mounting workspace: ${workspaceDir} -> /workspace`);
+    console.log(`🖼️  Image path in container: ${containerImagePath}`);
+    console.log(`🔧 Binary path in container: ${containerBinaryPath}`);
+
+    const child = spawn('docker', args);
+    let output = '';
+    let errorOutput = '';
+
+    // Set a longer timeout for Docker execution (60 seconds)
+    const timeout = setTimeout(() => {
+        child.kill('SIGKILL');
+        console.error('⏰ Docker execution timeout');
+        reject(new Error('Docker execution timeout - check if the binary is hanging'));
+    }, 60000);
+
+    child.stdout.on('data', (data) => {
+        const chunk = data.toString();
+        output += chunk;
+        if (DEBUG_MODE) {
+            console.log('🐳 STDOUT:', chunk.trim());
+        }
+    });
+
+    child.stderr.on('data', (data) => {
+        const chunk = data.toString();
+        errorOutput += chunk;
+        if (DEBUG_MODE) {
+            console.error('🐳 STDERR:', chunk.trim());
+        }
+    });
+
+    child.on('close', (code) => {
+        clearTimeout(timeout);
+        console.log(`🐳 Docker container exited with code: ${code}`);
+        
+        if (code === 0) {
+            // Parse the distance from output
+            const distance = parseDistanceFromOutput(output);
+            if (distance !== null) {
+                console.log(`✅ Successfully parsed distance: ${distance} meters`);
+                resolve(distance);
+            } else {
+                console.error('❌ Could not parse distance from output');
+                console.log('📋 Full output:', output);
+                reject(new Error('Could not parse distance from FOUND output'));
+            }
+        } else {
+            console.error(`❌ Docker execution failed with code ${code}`);
+            console.error('📋 Error output:', errorOutput);
+            console.log('📋 Full output:', output);
+            reject(new Error(`FOUND binary execution failed in Docker (exit code: ${code})`));
+        }
+    });
+
+    child.on('error', (error) => {
+        clearTimeout(timeout);
+        console.error('❌ Docker spawn error:', error);
+        reject(new Error(`Docker execution error: ${error.message}`));
+    });
+}
+
+// Build the FOUND command string
+function buildFoundCommand(binaryPath, imagePath, cameraSpecs, planetaryRadius, edgeResults = null) {
+    // Convert units for FOUND binary:
+    // - Focal length: mm → meters (multiply by 1e-3)
+    // - Pixel size: μm → meters (multiply by 1e-6)
+    const focalLengthInMeters = cameraSpecs.focalLength * 1e-3;
+    const pixelSizeInMeters = cameraSpecs.pixelSize * 1e-6;
+    
+    const args = [
+        binaryPath,
+        'edge-distance',
+        '--image', imagePath,
+        '--reference-as-orientation',
+        '--camera-focal-length', focalLengthInMeters.toString(),
+        '--camera-pixel-size', pixelSizeInMeters.toString(),
+        '--reference-orientation', '0,0,0'
+    ];
+
+    // Add edge detection results if available
+    if (edgeResults && edgeResults.success) {
+        args.push('--edge-points', edgeResults.edge_points_file);
+        args.push('--image-width', edgeResults.width.toString());
+        args.push('--image-height', edgeResults.height.toString());
+    }
+
+    // Add planetary radius if provided
+    if (planetaryRadius && planetaryRadius > 0) {
+        args.push('--planetary-radius', planetaryRadius.toString());
+    }
+
+    return args.join(' ');
+}
+
+// Run the FOUND binary natively (original implementation)
+async function runFoundBinaryNative(imagePath, cameraSpecs, planetaryRadius = null, edgeResults = null) {
     return new Promise((resolve, reject) => {
         const foundBinaryPath = './build/bin/found';
         
         // Check if binary exists
         if (!fs.existsSync(foundBinaryPath)) {
-            console.log('FOUND binary not found');
+            console.log('❌ FOUND binary not found at:', foundBinaryPath);
+            if (DEBUG_MODE) {
+                console.log('🔍 Checking for binary in different locations...');
+                const alternativePaths = [
+                    './found',
+                    './bin/found',
+                    path.join(__dirname, 'found'),
+                    path.join(__dirname, 'bin', 'found'),
+                    path.join(__dirname, 'build', 'found')
+                ];
+                
+                alternativePaths.forEach(altPath => {
+                    if (fs.existsSync(altPath)) {
+                        console.log(`✅ Found binary at alternative location: ${altPath}`);
+                    }
+                });
+            }
             reject(new Error('you couldn\'t be found'));
             return;
         }
 
         const args = [
-            'distance',
+            'edge-distance',
             '--image', imagePath,
             '--reference-as-orientation',
-            '--camera-focal-length', cameraSpecs.focalLength.toString(),
-            '--camera-pixel-size', cameraSpecs.pixelSize.toString(),
+            '--camera-focal-length', (cameraSpecs.focalLength * 1e-3).toString(),
+            '--camera-pixel-size', (cameraSpecs.pixelSize * 1e-6).toString(),
             '--reference-orientation', '0,0,0'
         ];
+
+        // Add edge detection results if available
+        if (edgeResults && edgeResults.success) {
+            args.push('--edge-points', edgeResults.edge_points_file);
+            args.push('--image-width', edgeResults.width.toString());
+            args.push('--image-height', edgeResults.height.toString());
+        }
 
         // Add planetary radius if provided
         if (planetaryRadius && planetaryRadius > 0) {
             args.push('--planetary-radius', planetaryRadius.toString());
         }
 
-        console.log(`Running: ${foundBinaryPath} ${args.join(' ')}`);
+        if (DEBUG_MODE) {
+            console.log(`🔧 Running natively: ${foundBinaryPath} ${args.join(' ')}`);
+            console.log(`📁 Working directory: ${process.cwd()}`);
+            console.log(`🖼️  Image path: ${imagePath}`);
+            console.log(`📷 Camera specs:`, cameraSpecs);
+            if (planetaryRadius) {
+                console.log(`🌍 Planetary radius: ${planetaryRadius}`);
+            }
+            if (edgeResults) {
+                console.log(`🔍 Edge detection: ${edgeResults.edge_points_count} points`);
+            }
+        }
 
         const child = spawn(foundBinaryPath, args);
         let output = '';
@@ -519,32 +909,58 @@ async function runFoundBinary(imagePath, cameraSpecs, planetaryRadius = null) {
         // Set a timeout for the binary execution (30 seconds)
         const timeout = setTimeout(() => {
             child.kill('SIGKILL');
+            console.error('⏰ Native execution timeout');
             reject(new Error('you couldn\'t be found'));
         }, 30000);
 
         child.stdout.on('data', (data) => {
-            output += data.toString();
+            const chunk = data.toString();
+            output += chunk;
+            if (DEBUG_MODE) {
+                console.log('📤 Native STDOUT:', chunk.trim());
+            }
         });
 
         child.stderr.on('data', (data) => {
-            errorOutput += data.toString();
+            const chunk = data.toString();
+            errorOutput += chunk;
+            if (DEBUG_MODE) {
+                console.error('📤 Native STDERR:', chunk.trim());
+            }
         });
 
         child.on('close', (code) => {
             clearTimeout(timeout);
+            if (DEBUG_MODE) {
+                console.log(`🏁 Native execution finished with code: ${code}`);
+            }
+            
             if (code === 0) {
                 // Parse the distance from output
                 const distance = parseDistanceFromOutput(output);
-                resolve(distance);
+                if (distance !== null) {
+                    resolve(distance);
+                } else {
+                    if (DEBUG_MODE) {
+                        console.error('❌ Could not parse distance from output:', output);
+                    }
+                    reject(new Error('Could not parse distance from FOUND output'));
+                }
             } else {
-                console.error(`FOUND binary exited with code ${code}: ${errorOutput}`);
+                if (DEBUG_MODE) {
+                    console.error(`❌ FOUND binary exited with code ${code}`);
+                    console.error('📋 Error output:', errorOutput);
+                    console.log('📋 Standard output:', output);
+                }
                 reject(new Error('you couldn\'t be found'));
             }
         });
 
         child.on('error', (error) => {
             clearTimeout(timeout);
-            console.error('Error running FOUND binary:', error);
+            if (DEBUG_MODE) {
+                console.error('❌ Error running FOUND binary:', error);
+            }
             reject(new Error('you couldn\'t be found'));
         });
     });
@@ -585,4 +1001,10 @@ app.use((error, req, res, next) => {
 app.listen(PORT, () => {
     console.log(`FOUND Website server running on port ${PORT}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    if (DEBUG_MODE) {
+        console.log('🐛 Debug mode enabled');
+        if (USE_DOCKER_DEBUG) {
+            console.log('🐳 Docker debugging enabled');
+        }
+    }
 });

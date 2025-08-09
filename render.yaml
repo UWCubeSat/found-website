@@ -3,9 +3,16 @@ services:
     name: found-website
     env: node
     plan: free
-    buildCommand: npm install
+    buildCommand: |
+      # Install Node.js dependencies
+      npm install
+      # Install Python dependencies
+      python3 -m pip install --upgrade pip
+      python3 -m pip install -r requirements.txt
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PYTHONPATH
+        value: /opt/render/project/src
     autoDeploy: false
