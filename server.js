@@ -304,7 +304,15 @@ function runFoundBinary(options) {
             } else {
                 // Check for specific error messages
                 const fullOutput = stdout + stderr;
-                if (fullOutput.toLowerCase().includes("you couldn't be found")) {
+                
+                // Check for library compatibility issues
+                if (stderr.includes('GLIBCXX_') || stderr.includes('GLIBC_') || stderr.includes('libstdc++')) {
+                    resolve({ 
+                        error: "Binary compatibility issue detected. The FOUND binary requires a newer Linux environment. Please contact support for a compatible binary version.",
+                        fullOutput,
+                        binaryError: true
+                    });
+                } else if (fullOutput.toLowerCase().includes("you couldn't be found")) {
                     resolve({ error: "you couldn't be found", fullOutput });
                 } else {
                     reject(new Error(`FOUND binary failed with code ${code}: ${stderr || stdout}`));
@@ -589,10 +597,37 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`Uploads directory: ${uploadsDir}`);
     
-    // Check if FOUND binary exists
+    // Check if FOUND binary exists and test compatibility
     const foundBinaryPath = path.join(__dirname, 'build', 'bin', 'found');
     if (fs.existsSync(foundBinaryPath)) {
         console.log('✓ FOUND binary found at:', foundBinaryPath);
+        
+        // Test binary compatibility by running a simple command
+        const testProcess = spawn(foundBinaryPath, ['--help'], { 
+            timeout: 5000,
+            stdio: 'pipe'
+        });
+        
+        let testStderr = '';
+        testProcess.stderr.on('data', (data) => {
+            testStderr += data.toString();
+        });
+        
+        testProcess.on('close', (code) => {
+            if (testStderr.includes('GLIBCXX_') || testStderr.includes('GLIBC_') || testStderr.includes('libstdc++')) {
+                console.error('⚠ FOUND binary compatibility issue detected:');
+                console.error('  The binary requires newer library versions than available on this system.');
+                console.error('  Users will receive appropriate error messages when attempting calculations.');
+                console.error('  Consider recompiling the binary for this environment or updating the system libraries.');
+            } else if (code === 0 || code === 1) {
+                // Code 1 might be expected for --help on some binaries
+                console.log('✓ FOUND binary appears compatible with system libraries');
+            }
+        });
+        
+        testProcess.on('error', (error) => {
+            console.warn('⚠ Could not test FOUND binary compatibility:', error.message);
+        });
     } else {
         console.warn('⚠ FOUND binary not found at:', foundBinaryPath);
     }
