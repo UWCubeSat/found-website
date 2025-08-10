@@ -132,18 +132,20 @@ def process_image(image_path):
     Main processing function
     """
     try:
-        # Load image as grayscale
-        image_rgb = cv2.imread(image_path, cv2.IMREAD_COLOR)
-        image_rgb_2 = cv2.cvtColor(image_rgb, cv2.COLOR_BGR2RGB)
-        red_channel = image_rgb_2[:, :, 0]  # In RGB, index 0 is red
-
-        if image_rgb is None:
+        # Load image in color mode
+        image_bgr = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        
+        if image_bgr is None:
             raise ValueError(f"Could not load image: {image_path}")
+        
+        # Convert BGR to RGB for proper display
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        red_channel = image_rgb[:, :, 0]  # Extract red channel for edge detection
         
         # Extract filename
         image_name = os.path.basename(image_path)
         
-        # Run Canny edge detection
+        # Run Canny edge detection on red channel
         edge_points = canny_edge_detection(red_channel)
 
         # Save edge points to text file for FOUND binary
@@ -151,7 +153,7 @@ def process_image(image_path):
         edge_points_path = edge_points_path.replace(os.path.splitext(edge_points_path)[1], '.txt')
         save_edge_points_to_file(edge_points, edge_points_path)
         
-        # Create visualization
+        # Create visualization using RGB image
         visualization_base64 = create_visualization(image_rgb, edge_points, image_name)
         
         # Return results
@@ -159,8 +161,8 @@ def process_image(image_path):
             'success': True,
             'edge_points_count': len(edge_points),
             'edge_points_file': edge_points_path,
-            'width': image.shape[1],
-            'height': image.shape[0],
+            'width': image_rgb.shape[1],
+            'height': image_rgb.shape[0],
             'visualization': visualization_base64,
         }
         
