@@ -1,13 +1,9 @@
 services:
   - type: web
     name: found-website
-    env: node
+    env: docker
     plan: free
-    buildCommand: |
-      npm install
-      python3 -m pip install --upgrade pip
-      python3 -m pip install numpy pillow opencv-python-headless matplotlib scipy
-    startCommand: npm start
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: NODE_ENV
         value: production
