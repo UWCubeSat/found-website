@@ -103,7 +103,7 @@ def create_visualization(image, edge_points, image_name):
     
     if edge_points:
         x_coords, y_coords = zip(*edge_points)
-        plt.scatter(x_coords, y_coords, color='red', s=1, alpha=0.7)
+        plt.scatter(x_coords, y_coords, color='blue', s=1, alpha=0.7)
     
     plt.axis('off')
     
@@ -133,24 +133,26 @@ def process_image(image_path):
     """
     try:
         # Load image as grayscale
-        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        
-        if image is None:
+        image_rgb = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        image_rgb_2 = cv2.cvtColor(image_rgb, cv2.COLOR_BGR2RGB)
+        red_channel = image_rgb_2[:, :, 0]  # In RGB, index 0 is red
+
+        if image_rgb is None:
             raise ValueError(f"Could not load image: {image_path}")
         
         # Extract filename
         image_name = os.path.basename(image_path)
         
         # Run Canny edge detection
-        edge_points = canny_edge_detection(image)
-        
+        edge_points = canny_edge_detection(red_channel)
+
         # Save edge points to text file for FOUND binary
         edge_points_path = image_path.replace('.', '_horizon_points.')
         edge_points_path = edge_points_path.replace(os.path.splitext(edge_points_path)[1], '.txt')
         save_edge_points_to_file(edge_points, edge_points_path)
         
         # Create visualization
-        visualization_base64 = create_visualization(image, edge_points, image_name)
+        visualization_base64 = create_visualization(image_rgb, edge_points, image_name)
         
         # Return results
         results = {
