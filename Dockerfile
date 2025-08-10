@@ -11,12 +11,15 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-dev \
+    python3-numpy \
+    python3-opencv \
+    python3-matplotlib \
+    python3-scipy \
+    python3-pil \
     build-essential \
     libstdc++6 \
     libc6 \
     pkg-config \
-    libhdf5-dev \
-    libopencv-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js
@@ -32,9 +35,10 @@ COPY package*.json ./
 # Install Node.js dependencies
 RUN npm install
 
-# Install Python dependencies
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
-RUN python3 -m pip install --no-cache-dir numpy pillow opencv-python-headless matplotlib scipy
+# Install Python dependencies (using system packages to avoid pip issues)
+# Additional pip packages if needed
+RUN python3 -c "import sys; print(sys.version)" && \
+    python3 -c "import pip; print('pip is available')" || echo "pip check failed"
 
 # Copy application files
 COPY . .

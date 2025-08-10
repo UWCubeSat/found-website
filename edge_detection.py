@@ -38,7 +38,7 @@ def canny_edge_detection(image):
     edges = cv2.Canny(blurred, 50, 150)
     
     # Find contours (which gives us connected components)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     
     if not contours:
         return []

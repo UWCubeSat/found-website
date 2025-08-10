@@ -246,8 +246,8 @@ function runFoundBinary(options) {
         const args = [
             'edge-distance',
             '--reference-as-orientation',
-            '--camera-focal-length', focalLength.toString(),
-            '--camera-pixel-size', pixelSize.toString(),
+            '--camera-focal-length', (focalLength * 1e-3).toString(),
+            '--camera-pixel-size', (pixelSize * 1e-6).toString(),
             '--reference-orientation', '0,0,0',
             '--image-width', imageWidth.toString(),
             '--image-height', imageHeight.toString(),
@@ -284,10 +284,10 @@ function runFoundBinary(options) {
                 // Parse the output to extract distance
                 const output = stdout.trim();
                 
-                // Look for distance in the output (assuming it's in a specific format)
-                const distanceMatch = output.match(/distance[:\s]+([0-9.]+)/i) || 
-                                    output.match(/([0-9.]+)\s*meters?/i) ||
-                                    output.match(/([0-9.]+)/);
+                // Look for distance in the output (including scientific notation)
+                const distanceMatch = output.match(/distance[:\s]+([0-9.]+(?:e[+-]?[0-9]+)?)/i) || 
+                                    output.match(/([0-9.]+(?:e[+-]?[0-9]+)?)\s*m(?:eters?)?/i) ||
+                                    output.match(/([0-9.]+(?:e[+-]?[0-9]+)?)/);
                 
                 if (distanceMatch) {
                     const distance = parseFloat(distanceMatch[1]);
