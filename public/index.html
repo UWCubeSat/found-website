@@ -507,25 +507,56 @@
                                   allTags['FocalLength'] || 
                                   allTags['focalLength'] || null;
                 
-                // Enhanced f35 extraction with Google Pixel specific fields
-                const focalLengthIn35mm = EXIF.getTag(this, "FocalLengthIn35mmFilm") || 
-                                        EXIF.getTag(this, "FocalLengthIn35mmFormat") || 
-                                        EXIF.getTag(this, "FocalLength35mm") || 
-                                        EXIF.getTag(this, "EquivalentFocalLength") ||
-                                        EXIF.getTag(this, "FocalLengthIn35mmEquiv") ||
-                                        // Google Pixel specific variations
-                                        EXIF.getTag(this, "35mmFocalLength") ||
-                                        EXIF.getTag(this, "35mmEquivalent") ||
-                                        EXIF.getTag(this, "CameraFocalLength") ||
-                                        // Try from allTags object
-                                        allTags['FocalLengthIn35mmFilm'] ||
-                                        allTags['FocalLengthIn35mmFormat'] ||
-                                        allTags['FocalLength35mm'] ||
-                                        allTags['EquivalentFocalLength'] ||
-                                        allTags['FocalLengthIn35mmEquiv'] ||
-                                        allTags['35mmFocalLength'] ||
-                                        allTags['35mmEquivalent'] ||
-                                        allTags['CameraFocalLength'] || null;
+                // Enhanced f35 extraction with device-specific field priorities
+                let focalLengthIn35mm = null;
+                
+                // Samsung devices prioritize FocalLengthIn35mmFormat
+                if (make && make.toLowerCase().includes('samsung')) {
+                    focalLengthIn35mm = EXIF.getTag(this, "FocalLengthIn35mmFormat") || 
+                                       allTags['FocalLengthIn35mmFormat'] ||
+                                       EXIF.getTag(this, "FocalLengthIn35mmFilm") || 
+                                       allTags['FocalLengthIn35mmFilm'];
+                    console.log('Samsung device detected - prioritizing FocalLengthIn35mmFormat');
+                }
+                
+                // If not Samsung or no f35 found yet, try all variations
+                if (!focalLengthIn35mm) {
+                    focalLengthIn35mm = EXIF.getTag(this, "FocalLengthIn35mmFilm") || 
+                                      EXIF.getTag(this, "FocalLengthIn35mmFormat") || 
+                                      EXIF.getTag(this, "FocalLength35mm") || 
+                                      EXIF.getTag(this, "EquivalentFocalLength") ||
+                                      EXIF.getTag(this, "FocalLengthIn35mmEquiv") ||
+                                      // Google Pixel specific variations
+                                      EXIF.getTag(this, "35mmFocalLength") ||
+                                      EXIF.getTag(this, "35mmEquivalent") ||
+                                      EXIF.getTag(this, "CameraFocalLength") ||
+                                      // Try from allTags object
+                                      allTags['FocalLengthIn35mmFilm'] ||
+                                      allTags['FocalLengthIn35mmFormat'] ||
+                                      allTags['FocalLength35mm'] ||
+                                      allTags['EquivalentFocalLength'] ||
+                                      allTags['FocalLengthIn35mmEquiv'] ||
+                                      allTags['35mmFocalLength'] ||
+                                      allTags['35mmEquivalent'] ||
+                                      allTags['CameraFocalLength'] || null;
+                }
+                
+                // Samsung specific debugging
+                if (make && make.toLowerCase().includes('samsung')) {
+                    console.log('Samsung device detected - Enhanced EXIF debugging:');
+                    console.log('Available EXIF keys:', Object.keys(allTags));
+                    
+                    // Log all focal length related fields found
+                    const focalFields = Object.keys(allTags).filter(key => 
+                        key.toLowerCase().includes('focal') || 
+                        key.toLowerCase().includes('35') ||
+                        key.toLowerCase().includes('equiv')
+                    );
+                    console.log('Focal length related fields found:', focalFields);
+                    focalFields.forEach(field => {
+                        console.log(`${field}:`, allTags[field]);
+                    });
+                }
                 
                 // Google Pixel specific debugging
                 if ((make && make.toLowerCase().includes('google')) || 
