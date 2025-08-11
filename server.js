@@ -629,6 +629,17 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
         // Default radius of red ball: 19.25/(2π) × 0.025 = 0.0765933164 meters
         const planetaryRadius = parseFloat(req.body.planetaryRadius) || 0.0765933164;
 
+        // Extract optional manual camera information
+        const manualF35 = req.body.f35 ? parseFloat(req.body.f35) : null;
+        const manualMake = req.body.cameraMake || null;
+        const manualModel = req.body.cameraModel || null;
+        
+        console.log('Manual camera info provided:', {
+            f35: manualF35,
+            make: manualMake,
+            model: manualModel
+        });
+
         // Check if EXIF data was sent from frontend
         let manualExifData = null;
         if (req.body.exifData) {
@@ -638,6 +649,17 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
             } catch (error) {
                 console.warn('Could not parse frontend EXIF data (manual):', error.message);
             }
+        }
+
+        // Override EXIF data with manual inputs if provided
+        if (manualF35 || manualMake || manualModel) {
+            if (!manualExifData) {
+                manualExifData = {};
+            }
+            if (manualF35) manualExifData.focalLengthIn35mm = manualF35;
+            if (manualMake) manualExifData.make = manualMake;
+            if (manualModel) manualExifData.model = manualModel;
+            console.log('Enhanced EXIF data with manual inputs:', manualExifData);
         }
 
         // If no frontend EXIF data, try server-side extraction
