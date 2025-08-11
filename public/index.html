@@ -248,6 +248,7 @@
 
             <div class="upload-section" id="uploadSection">
                 <h3>Upload or Capture an Image</h3>
+                <p style="color: #666; margin-bottom: 10px;">💡 <strong>Tip:</strong> For best EXIF data preservation on mobile devices, use "Choose from Gallery"</p>
                 <p>Select an image file or take a photo with your camera</p>
                 
                 <input type="file" id="fileInput" class="file-input" accept="image/*">
@@ -255,7 +256,7 @@
                 
                 <div style="margin-top: 20px;">
                     <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
-                        📁 Choose File
+                        📁 Choose from Gallery
                     </button>
                     <button class="upload-btn camera-btn" onclick="document.getElementById('cameraInput').click()">
                         📷 Take Photo
@@ -394,6 +395,12 @@
         function handleFileSelect(event) {
             const file = event.target.files[0];
             if (file) {
+                // Detect source (camera vs file picker) for debugging
+                const isFromCamera = event.target.id === 'cameraInput';
+                console.log('File source:', isFromCamera ? 'Camera Capture' : 'File Gallery');
+                
+                // Pass source info to handleFile
+                file._sourceType = isFromCamera ? 'camera' : 'gallery';
                 handleFile(file);
             }
         }
@@ -411,7 +418,8 @@
                 name: file.name,
                 type: file.type,
                 size: file.size,
-                lastModified: new Date(file.lastModified)
+                lastModified: new Date(file.lastModified),
+                source: file._sourceType || 'unknown'
             });
             
             // Reset form state
@@ -441,32 +449,153 @@
         let extractedEXIF = null;
 
         function extractEXIFData(file) {
-            // Use EXIF.js to extract only essential metadata needed by reader.py
+            console.log('Starting EXIF extraction for file:', file.name, 'Size:', file.size, 'Type:', file.type);
+            
+            // Reset EXIF data
+            extractedEXIF = null;
+            
+            // Method 1: Try EXIF.js library
             EXIF.getData(file, function() {
-                console.log('Extracting essential EXIF data for reader.py...');
+                console.log('EXIF.js processing completed');
                 
-                // Only extract fields that reader.py specifically needs
-                extractedEXIF = {
-                    // Camera identification (required by reader.py)
-                    make: EXIF.getTag(this, "Make") || null,
-                    model: EXIF.getTag(this, "Model") || null,
+                // Get all available tags for debugging
+                const allTags = EXIF.getAllTags(this);
+                console.log('All EXIF tags found:', allTags);
+                console.log('Number of EXIF tags:', Object.keys(allTags).length);
+                
+                // Extract essential fields with multiple fallback attempts
+                const make = EXIF.getTag(this, "Make") || EXIF.getTag(this, "make") || allTags['Make'] || allTags['make'] || null;
+                const model = EXIF.getTag(this, "Model") || EXIF.getTag(this, "model") || allTags['Model'] || allTags['model'] || null;
+                
+                // Try multiple focal length field variations
+                const focalLength = EXIF.getTag(this, "FocalLength") || 
+                                  EXIF.getTag(this, "focalLength") ||
+                                  allTags['FocalLength'] || 
+                                  allTags['focalLength'] || null;
+                
+                const focalLengthIn35mm = EXIF.getTag(this, "FocalLengthIn35mmFilm") || 
+                                        EXIF.getTag(this, "FocalLengthIn35mmFormat") || 
+                                        EXIF.getTag(this, "FocalLength35mm") || 
+                                        EXIF.getTag(this, "EquivalentFocalLength") ||
+                                        allTags['FocalLengthIn35mmFilm'] ||
+                                        allTags['FocalLengthIn35mmFormat'] ||
+                                        allTags['FocalLength35mm'] || null;
+                
+                console.log('Extracted values:', { make, model, focalLength, focalLengthIn35mm });
+                
+                extractedEXIF = { make, model, focalLength, focalLengthIn35mm };
+                
+                // If no EXIF found with EXIF.js, try alternative method
+                if (!make && !model && !focalLength && !focalLengthIn35mm) {
+                    console.log('No EXIF data found with EXIF.js, trying alternative method...');
+                    tryAlternativeEXIFExtraction(file);
+                } else {
+                    // Log only essential data for debugging
+                    console.log('Processed EXIF data:', extractedEXIF);
                     
-                    // Focal length data (required by reader.py)
-                    focalLength: EXIF.getTag(this, "FocalLength") || null,
-                    focalLengthIn35mm: EXIF.getTag(this, "FocalLengthIn35mmFilm") || 
-                                     EXIF.getTag(this, "FocalLengthIn35mmFormat") || 
-                                     EXIF.getTag(this, "FocalLength35mm") || 
-                                     EXIF.getTag(this, "EquivalentFocalLength") || null
-                };
-                
-                // Log only essential data for debugging
-                console.log('Processed EXIF data:', extractedEXIF);
-                
-                // Show a preview of detected camera info if available
-                if (extractedEXIF.make || extractedEXIF.model) {
-                    showDetectedCameraInfo();
+                    // Show a preview of detected camera info if available
+                    if (extractedEXIF.make || extractedEXIF.model) {
+                        showDetectedCameraInfo();
+                    } else {
+                        showNoEXIFMessage();
+                    }
                 }
             });
+        }
+        
+        function tryAlternativeEXIFExtraction(file) {
+            console.log('Attempting alternative EXIF extraction method...');
+            
+            // Method 2: Try reading as ArrayBuffer for binary EXIF parsing
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const arrayBuffer = e.target.result;
+                    console.log('File loaded as ArrayBuffer, size:', arrayBuffer.byteLength);
+                    
+                    // Look for EXIF signature in the binary data
+                    const view = new DataView(arrayBuffer);
+                    let exifFound = false;
+                    
+                    // Check for JPEG EXIF marker (0xFFE1)
+                    for (let i = 0; i < Math.min(arrayBuffer.byteLength - 10, 1000); i++) {
+                        if (view.getUint8(i) === 0xFF && view.getUint8(i + 1) === 0xE1) {
+                            // Check for "Exif" string
+                            const exifStr = String.fromCharCode(
+                                view.getUint8(i + 4),
+                                view.getUint8(i + 5),
+                                view.getUint8(i + 6),
+                                view.getUint8(i + 7)
+                            );
+                            if (exifStr === 'Exif') {
+                                exifFound = true;
+                                console.log('EXIF marker found at position:', i);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (!exifFound) {
+                        console.log('No EXIF data present in file binary data');
+                        showNoEXIFMessage();
+                        return;
+                    }
+                    
+                    // If EXIF marker found but couldn't read it, show partial success
+                    console.log('EXIF data exists but may be inaccessible due to browser/device limitations');
+                    showLimitedEXIFMessage();
+                    
+                } catch (error) {
+                    console.error('Alternative EXIF extraction failed:', error);
+                    showNoEXIFMessage();
+                }
+            };
+            
+            reader.onerror = function() {
+                console.error('Failed to read file as ArrayBuffer');
+                showNoEXIFMessage();
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+        
+        function showNoEXIFMessage() {
+            const resultsSection = document.getElementById('resultsSection');
+            resultsSection.innerHTML = `
+                <div class="results-section" style="background: #fff3cd; border-left: 4px solid #ffc107;">
+                    <h3>⚠️ No EXIF Data Found</h3>
+                    <p>This image doesn't contain EXIF metadata or it was removed during processing.</p>
+                    <p><strong>Common causes:</strong></p>
+                    <ul style="margin-left: 20px;">
+                        <li>📱 iOS devices often strip EXIF data for privacy</li>
+                        <li>🌐 Some web apps remove metadata during upload</li>
+                        <li>📷 Camera settings may disable EXIF recording</li>
+                        <li>🔄 Image was edited/processed before upload</li>
+                    </ul>
+                    <p style="color: #856404; margin-top: 15px;">
+                        <strong>Solution:</strong> You can manually enter camera specifications below.
+                    </p>
+                </div>
+            `;
+        }
+        
+        function showLimitedEXIFMessage() {
+            const resultsSection = document.getElementById('resultsSection');
+            resultsSection.innerHTML = `
+                <div class="results-section" style="background: #e1ecf4; border-left: 4px solid #0c5460;">
+                    <h3>📱 Limited EXIF Access</h3>
+                    <p>EXIF data is present but cannot be fully accessed due to device/browser limitations.</p>
+                    <p><strong>This is common on:</strong></p>
+                    <ul style="margin-left: 20px;">
+                        <li>🍎 iOS Safari and mobile browsers</li>
+                        <li>🔒 Privacy-focused browser settings</li>
+                        <li>📱 Direct camera capture on mobile devices</li>
+                    </ul>
+                    <p style="color: #0c5460; margin-top: 15px;">
+                        <strong>Recommendation:</strong> Use manual input for most accurate results.
+                    </p>
+                </div>
+            `;
         }
 
         function showDetectedCameraInfo() {

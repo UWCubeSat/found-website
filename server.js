@@ -542,7 +542,7 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
         }
 
         // Run edge detection
-        console.log('Running edge detection...');
+        console.log('Running adaptive edge detection (phone camera vs uploaded image detection)...');
         const edgeDetectionResult = await runEdgeDetection(imagePath);
 
         if (!edgeDetectionResult.success) {
@@ -553,6 +553,7 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
         }
 
         console.log('Edge detection completed. Points found:', edgeDetectionResult.edge_points_count);
+        console.log('Edge detection algorithm used:', edgeDetectionResult.algorithm_used || 'unknown');
 
         // Run FOUND binary
         console.log('Running FOUND binary...');
@@ -685,7 +686,7 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
         cameraSpecs.source = 'manual';
 
         // Run edge detection
-        console.log('Running edge detection...');
+        console.log('Running adaptive edge detection (manual input mode)...');
         const edgeDetectionResult = await runEdgeDetection(imagePath);
 
         if (!edgeDetectionResult.success) {
@@ -696,6 +697,7 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
         }
 
         console.log('Edge detection completed. Points found:', edgeDetectionResult.edge_points_count);
+        console.log('Edge detection algorithm used:', edgeDetectionResult.algorithm_used || 'unknown');
 
         // Run FOUND binary
         console.log('Running FOUND binary with manual specs...');
