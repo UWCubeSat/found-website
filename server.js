@@ -499,19 +499,32 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
         // Default radius of red ball: 19.25/(2π) × 0.025 = 0.0765933164 meters
         const planetaryRadius = parseFloat(req.body.planetaryRadius) || 0.0765933164;
 
-        // Debug EXIF data immediately after upload
-        await debugEXIFData(imagePath);
-
-        // Extract EXIF data
+        // Check if EXIF data was sent from frontend
         let exifData = null;
-        try {
-            exifData = await exifr.parse(imagePath, { 
-                ifd0: true, 
-                exif: true,
-                gps: false 
-            });
-        } catch (error) {
-            console.warn('Could not extract EXIF data:', error.message);
+        if (req.body.exifData) {
+            try {
+                exifData = JSON.parse(req.body.exifData);
+                console.log('Using EXIF data from frontend:', exifData);
+            } catch (error) {
+                console.warn('Could not parse frontend EXIF data:', error.message);
+            }
+        }
+
+        // If no frontend EXIF data, try server-side extraction
+        if (!exifData) {
+            console.log('No frontend EXIF data, attempting server-side extraction...');
+            await debugEXIFData(imagePath);
+            
+            try {
+                exifData = await exifr.parse(imagePath, { 
+                    ifd0: true, 
+                    exif: true,
+                    gps: false 
+                });
+                console.log('Server-side EXIF extraction successful:', exifData);
+            } catch (error) {
+                console.warn('Server-side EXIF extraction failed:', error.message);
+            }
         }
 
         // Extract camera specifications
@@ -615,8 +628,33 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
         // Default radius of red ball: 19.25/(2π) × 0.025 = 0.0765933164 meters
         const planetaryRadius = parseFloat(req.body.planetaryRadius) || 0.0765933164;
 
-        // Debug EXIF data immediately after upload
-        await debugEXIFData(imagePath);
+        // Check if EXIF data was sent from frontend
+        let manualExifData = null;
+        if (req.body.exifData) {
+            try {
+                manualExifData = JSON.parse(req.body.exifData);
+                console.log('Using EXIF data from frontend (manual):', manualExifData);
+            } catch (error) {
+                console.warn('Could not parse frontend EXIF data (manual):', error.message);
+            }
+        }
+
+        // If no frontend EXIF data, try server-side extraction
+        if (!manualExifData) {
+            console.log('No frontend EXIF data, attempting server-side extraction (manual)...');
+            await debugEXIFData(imagePath);
+            
+            try {
+                manualExifData = await exifr.parse(imagePath, { 
+                    ifd0: true, 
+                    exif: true,
+                    gps: false 
+                });
+                console.log('Server-side EXIF extraction successful (manual):', manualExifData);
+            } catch (error) {
+                console.warn('Server-side EXIF extraction failed (manual):', error.message);
+            }
+        }
 
         // Validate manual input
         if (!focalLength || !pixelSize || focalLength <= 0 || pixelSize <= 0) {
@@ -626,19 +664,20 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
             });
         }
 
-        // Extract basic camera info for display
-        let exifData = null;
-        try {
-            exifData = await exifr.parse(imagePath, { 
-                ifd0: true, 
-                exif: true,
-                gps: false 
-            });
-        } catch (error) {
-            console.warn('Could not extract EXIF data:', error.message);
+        // Extract basic camera info for display using manualExifData if available
+        if (!manualExifData) {
+            try {
+                manualExifData = await exifr.parse(imagePath, { 
+                    ifd0: true, 
+                    exif: true,
+                    gps: false 
+                });
+            } catch (error) {
+                console.warn('Could not extract EXIF data for display:', error.message);
+            }
         }
 
-        const cameraSpecs = await extractCameraSpecs(imagePath, exifData);
+        const cameraSpecs = await extractCameraSpecs(imagePath, manualExifData);
         
         // Override with manual values
         cameraSpecs.focalLength = focalLength;

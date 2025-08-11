@@ -215,6 +215,8 @@
             }
         }
     </style>
+    <!-- EXIF.js library for reading essential EXIF metadata needed by reader.py -->
+    <script src="https://cdn.jsdelivr.net/npm/exif-js@2.3.0/exif.js"></script>
 </head>
 <body>
     <div class="container">
@@ -232,10 +234,11 @@
                         <label for="planetaryRadius" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">Planetary Radius (m):</label>
                         <input type="number" id="planetaryRadius" step="0.1" min="0" 
                                style="width: 100%; padding: 8px; border: 1px solid #27ae60; border-radius: 4px;" 
-                               placeholder="e.g., 6371008.7714 (Earth)" value="6371008.7714">
+                               placeholder="e.g., 0.0765933164 (Red Ball)" value="0.0765933164">
                     </div>
                     <div style="color: #7f8c8d; font-size: 0.9em;">
                         <strong>Common values:</strong><br>
+                        Red Ball: 0.0765933164 m<br>
                         Earth: 6371008.7714 m<br>
                         Moon: 1737400 m<br>
                         Mars: 3389500 m
@@ -330,17 +333,17 @@
         document.addEventListener('DOMContentLoaded', function() {
             const savedRadius = localStorage.getItem('planetaryRadius');
             
-            // Check if saved radius is the old short format (just 6371) and update it
-            if (savedRadius && (savedRadius === '6371' || parseFloat(savedRadius) < 10000)) {
-                // Update old short format to full Earth radius
-                document.getElementById('planetaryRadius').value = '6371008.7714';
-                localStorage.setItem('planetaryRadius', '6371008.7714');
+            // Check if saved radius is the old format and update it to red ball default
+            if (savedRadius && (savedRadius === '6371' || savedRadius === '6371008.7714' || parseFloat(savedRadius) > 1000)) {
+                // Update old format to red ball radius
+                document.getElementById('planetaryRadius').value = '0.0765933164';
+                localStorage.setItem('planetaryRadius', '0.0765933164');
             } else if (savedRadius) {
                 document.getElementById('planetaryRadius').value = savedRadius;
             } else {
-                // Set default Earth radius in meters if no saved value
-                document.getElementById('planetaryRadius').value = '6371008.7714';
-                localStorage.setItem('planetaryRadius', '6371008.7714');
+                // Set default red ball radius if no saved value
+                document.getElementById('planetaryRadius').value = '0.0765933164';
+                localStorage.setItem('planetaryRadius', '0.0765933164');
             }
             
             // Save planetary radius when it changes
@@ -418,7 +421,7 @@
             document.getElementById('manualPixelSize').value = '';
             document.getElementById('manualPlanetaryRadius').value = ''; // Reset manual planetary radius
             
-            // Show preview
+            // Show preview and extract EXIF data
             const reader = new FileReader();
             reader.onload = (e) => {
                 const preview = document.getElementById('imagePreview');
@@ -427,8 +430,74 @@
                 
                 // Hide previous results
                 document.getElementById('resultsSection').innerHTML = '';
+                
+                // Extract EXIF data from the image
+                extractEXIFData(file);
             };
             reader.readAsDataURL(file);
+        }
+
+        // Global variable to store extracted EXIF data
+        let extractedEXIF = null;
+
+        function extractEXIFData(file) {
+            // Use EXIF.js to extract only essential metadata needed by reader.py
+            EXIF.getData(file, function() {
+                console.log('Extracting essential EXIF data for reader.py...');
+                
+                // Only extract fields that reader.py specifically needs
+                extractedEXIF = {
+                    // Camera identification (required by reader.py)
+                    make: EXIF.getTag(this, "Make") || null,
+                    model: EXIF.getTag(this, "Model") || null,
+                    
+                    // Focal length data (required by reader.py)
+                    focalLength: EXIF.getTag(this, "FocalLength") || null,
+                    focalLengthIn35mm: EXIF.getTag(this, "FocalLengthIn35mmFilm") || 
+                                     EXIF.getTag(this, "FocalLengthIn35mmFormat") || 
+                                     EXIF.getTag(this, "FocalLength35mm") || 
+                                     EXIF.getTag(this, "EquivalentFocalLength") || null
+                };
+                
+                // Log only essential data for debugging
+                console.log('Processed EXIF data:', extractedEXIF);
+                
+                // Show a preview of detected camera info if available
+                if (extractedEXIF.make || extractedEXIF.model) {
+                    showDetectedCameraInfo();
+                }
+            });
+        }
+
+        function showDetectedCameraInfo() {
+            const resultsSection = document.getElementById('resultsSection');
+            let html = '<div class="results-section" style="background: #e8f5e8;"><h3>📷 Detected Camera Information</h3>';
+            
+            if (extractedEXIF.make) {
+                html += `<div class="result-item">
+                    <span class="result-label">Make:</span>
+                    <span class="result-value">${extractedEXIF.make}</span>
+                </div>`;
+            }
+            
+            if (extractedEXIF.model) {
+                html += `<div class="result-item">
+                    <span class="result-label">Model:</span>
+                    <span class="result-value">${extractedEXIF.model}</span>
+                </div>`;
+            }
+            
+            if (extractedEXIF.focalLength) {
+                html += `<div class="result-item">
+                    <span class="result-label">Focal Length:</span>
+                    <span class="result-value">${extractedEXIF.focalLength} mm</span>
+                </div>`;
+            }
+            
+            html += '<p style="color: #27ae60; font-size: 0.9em; margin-top: 10px;">✅ Essential EXIF data extracted for camera specifications.</p>';
+            html += '</div>';
+            
+            resultsSection.innerHTML = html;
         }
 
         async function processImage() {
@@ -448,6 +517,12 @@
             const radius = getPlanetaryRadius();
             if (radius) {
                 formData.append('planetaryRadius', radius.toString());
+            }
+            
+            // Add extracted EXIF data if available
+            if (extractedEXIF) {
+                formData.append('exifData', JSON.stringify(extractedEXIF));
+                console.log('Sending EXIF data to server:', extractedEXIF);
             }
 
             try {
@@ -507,6 +582,12 @@
             const radius = getPlanetaryRadius(true);
             if (radius) {
                 formData.append('planetaryRadius', radius.toString());
+            }
+            
+            // Add extracted EXIF data if available
+            if (extractedEXIF) {
+                formData.append('exifData', JSON.stringify(extractedEXIF));
+                console.log('Sending EXIF data to server (manual):', extractedEXIF);
             }
 
             try {
