@@ -467,19 +467,49 @@
                 const make = EXIF.getTag(this, "Make") || EXIF.getTag(this, "make") || allTags['Make'] || allTags['make'] || null;
                 const model = EXIF.getTag(this, "Model") || EXIF.getTag(this, "model") || allTags['Model'] || allTags['model'] || null;
                 
-                // Try multiple focal length field variations
+                // Try multiple focal length field variations (enhanced for Google Pixel)
                 const focalLength = EXIF.getTag(this, "FocalLength") || 
                                   EXIF.getTag(this, "focalLength") ||
                                   allTags['FocalLength'] || 
                                   allTags['focalLength'] || null;
                 
+                // Enhanced f35 extraction with Google Pixel specific fields
                 const focalLengthIn35mm = EXIF.getTag(this, "FocalLengthIn35mmFilm") || 
                                         EXIF.getTag(this, "FocalLengthIn35mmFormat") || 
                                         EXIF.getTag(this, "FocalLength35mm") || 
                                         EXIF.getTag(this, "EquivalentFocalLength") ||
+                                        EXIF.getTag(this, "FocalLengthIn35mmEquiv") ||
+                                        // Google Pixel specific variations
+                                        EXIF.getTag(this, "35mmFocalLength") ||
+                                        EXIF.getTag(this, "35mmEquivalent") ||
+                                        EXIF.getTag(this, "CameraFocalLength") ||
+                                        // Try from allTags object
                                         allTags['FocalLengthIn35mmFilm'] ||
                                         allTags['FocalLengthIn35mmFormat'] ||
-                                        allTags['FocalLength35mm'] || null;
+                                        allTags['FocalLength35mm'] ||
+                                        allTags['EquivalentFocalLength'] ||
+                                        allTags['FocalLengthIn35mmEquiv'] ||
+                                        allTags['35mmFocalLength'] ||
+                                        allTags['35mmEquivalent'] ||
+                                        allTags['CameraFocalLength'] || null;
+                
+                // Google Pixel specific debugging
+                if ((make && make.toLowerCase().includes('google')) || 
+                    (model && model.toLowerCase().includes('pixel'))) {
+                    console.log('Google Pixel detected - Enhanced EXIF debugging:');
+                    console.log('Available EXIF keys:', Object.keys(allTags));
+                    
+                    // Log all focal length related fields found
+                    const focalFields = Object.keys(allTags).filter(key => 
+                        key.toLowerCase().includes('focal') || 
+                        key.toLowerCase().includes('35') ||
+                        key.toLowerCase().includes('equiv')
+                    );
+                    console.log('Focal length related fields found:', focalFields);
+                    focalFields.forEach(field => {
+                        console.log(`${field}:`, allTags[field]);
+                    });
+                }
                 
                 console.log('Extracted values:', { make, model, focalLength, focalLengthIn35mm });
                 
