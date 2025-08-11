@@ -136,7 +136,16 @@ def get_exif_f35(exif_data):
         'FocalLengthIn35mmFilm', 
         'FocalLength35mm',
         'EquivalentFocalLength',
-        'FocalLengthIn35mmEquiv'
+        'FocalLengthIn35mmEquiv',
+        # Google Pixel specific variations
+        '35mmFocalLength',
+        '35mmEquivalent',
+        'CameraFocalLength',
+        'EXIF 35mmFocalLength',
+        'EXIF FocalLength35mm',
+        # Additional common variations
+        'FocalLengthEquivalent',
+        'Film35mmFocalLength'
     ]
     
     for field in possible_fields:
@@ -220,6 +229,15 @@ def process_image(image_path):
         f35_from_exif = get_exif_f35(exif_tags)
         result["f35_focal_length_mm"] = f35_from_exif
         
+        # Enhanced debugging for Google Pixel devices
+        if full_model and ('Google' in str(full_model) or 'Pixel' in str(full_model)):
+            print(f"DEBUG: Google Pixel device detected: {full_model}")
+            print("DEBUG: Available EXIF fields:")
+            for key in sorted(exif_tags.keys()):
+                if 'focal' in key.lower() or '35' in key.lower() or 'equiv' in key.lower():
+                    print(f"  {key}: {exif_tags[key]}")
+            print(f"DEBUG: Extracted f35: {f35_from_exif}")
+        
         # Get actual focal length from EXIF
         actual_focal = get_actual_focal_length(exif_tags)
         result["actual_focal_length_mm"] = actual_focal
@@ -244,6 +262,16 @@ def process_image(image_path):
             calculated_focal = calculate_actual_focal_length(f35_from_exif, d_sensor, d_35)
             if calculated_focal:
                 result["actual_focal_length_mm"] = calculated_focal
+        
+        # If we don't have f35 but have actual focal length, try to calculate f35
+        elif not f35_from_exif and actual_focal and pixel_size_um:
+            # Estimate sensor diagonal for Google Pixel devices
+            if full_model and ('Google' in str(full_model) or 'Pixel' in str(full_model)):
+                d_sensor = 6.15  # mm (typical for Google Pixel phones)
+                d_35 = math.sqrt(36**2 + 24**2)  # ~43.27 mm
+                calculated_f35 = actual_focal * (d_35 / d_sensor)
+                result["f35_focal_length_mm"] = calculated_f35
+                print(f"DEBUG: Calculated f35 for Google Pixel: {calculated_f35}mm (from actual: {actual_focal}mm)")
         
         return result
         
