@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     python3-matplotlib \
     python3-scipy \
     python3-pil \
+    python3-exifread \
     build-essential \
     libstdc++6 \
     libc6 \

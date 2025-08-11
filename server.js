@@ -76,6 +76,69 @@ const cameraDatabase = {
     'default': { focalLength: 26, pixelSize: 1.4 }
 };
 
+// Helper function to run Python reader script for enhanced EXIF extraction
+function runReaderScript(imagePath) {
+    return new Promise((resolve, reject) => {
+        const pythonProcess = spawn('python3', ['reader.py', imagePath], {
+            cwd: __dirname
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        pythonProcess.stdout.on('data', (data) => {
+            stdout += data.toString();
+        });
+
+        pythonProcess.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
+
+        pythonProcess.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    // Parse the reader output to extract camera specs
+                    const result = parseReaderOutput(stdout);
+                    resolve(result);
+                } catch (error) {
+                    reject(new Error(`Failed to parse reader.py output: ${error.message}`));
+                }
+            } else {
+                reject(new Error(`reader.py script failed with code ${code}: ${stderr}`));
+            }
+        });
+
+        pythonProcess.on('error', (error) => {
+            reject(new Error(`Failed to start reader.py process: ${error.message}`));
+        });
+    });
+}
+
+// Helper function to parse reader.py output
+function parseReaderOutput(output) {
+    try {
+        // Parse JSON output from reader.py
+        const result = JSON.parse(output.trim());
+        
+        if (!result.success) {
+            throw new Error(result.error || 'Reader script failed');
+        }
+
+        return {
+            pixelSize: result.pixel_size_um,  // Already in µm
+            focalLength: result.actual_focal_length_mm,
+            f35FocalLength: result.f35_focal_length_mm,
+            cameraMake: result.camera_make,
+            cameraModel: result.camera_model,
+            fullCameraModel: result.full_camera_model,
+            lensType: result.lens_type,
+            source: 'reader_script'
+        };
+    } catch (error) {
+        throw new Error(`Failed to parse reader.py JSON output: ${error.message}`);
+    }
+}
+
 // Helper function to extract camera specifications
 async function extractCameraSpecs(imagePath, exifData) {
     let specs = {
@@ -89,6 +152,34 @@ async function extractCameraSpecs(imagePath, exifData) {
     };
 
     let sources = [];
+
+    // First try reader.py for enhanced camera database lookup
+    try {
+        console.log('Running reader.py for enhanced EXIF extraction...');
+        const readerResult = await runReaderScript(imagePath);
+        
+        if (readerResult.pixelSize) {
+            specs.pixelSize = readerResult.pixelSize;
+            sources.push('reader_script');
+        }
+        
+        if (readerResult.focalLength) {
+            specs.focalLength = readerResult.focalLength;
+            sources.push('reader_script');
+        }
+        
+        // Use camera info from reader.py if available
+        if (readerResult.cameraMake) {
+            specs.make = readerResult.cameraMake;
+        }
+        if (readerResult.cameraModel) {
+            specs.model = readerResult.cameraModel;
+        }
+        
+        console.log('Reader.py results:', readerResult);
+    } catch (error) {
+        console.warn('Reader.py failed, falling back to standard extraction:', error.message);
+    }
 
     // Try to get basic image dimensions
     try {
@@ -112,7 +203,7 @@ async function extractCameraSpecs(imagePath, exifData) {
         console.warn('Could not extract image dimensions:', error.message);
     }
 
-    // Extract EXIF data
+    // Extract EXIF data for camera make/model and fallback values
     if (exifData) {
         if (exifData.Make) {
             specs.make = exifData.Make.trim();
@@ -121,12 +212,15 @@ async function extractCameraSpecs(imagePath, exifData) {
         if (exifData.Model) {
             specs.model = exifData.Model.trim();
         }
-        if (exifData.FocalLength || exifData.FocalLengthIn35mmFormat) {
+        
+        // Use EXIF focal length only if reader.py didn't provide one
+        if (!specs.focalLength && (exifData.FocalLength || exifData.FocalLengthIn35mmFormat)) {
             specs.focalLength = exifData.FocalLength || exifData.FocalLengthIn35mmFormat;
+            sources.push('exif');
         }
         
-        // Try to calculate pixel size from EXIF data
-        if (exifData.FocalPlaneXResolution && exifData.FocalPlaneResolutionUnit) {
+        // Try to calculate pixel size from EXIF data if reader.py didn't provide one
+        if (!specs.pixelSize && exifData.FocalPlaneXResolution && exifData.FocalPlaneResolutionUnit) {
             const resolutionUnit = exifData.FocalPlaneResolutionUnit;
             let conversionFactor = 1;
             
@@ -137,11 +231,12 @@ async function extractCameraSpecs(imagePath, exifData) {
             }
             
             specs.pixelSize = conversionFactor / exifData.FocalPlaneXResolution;
+            sources.push('exif');
         }
     }
 
-    // Try to get specs from camera database
-    if (specs.make && specs.model) {
+    // Fallback to built-in camera database only if we still don't have specs
+    if ((!specs.focalLength || !specs.pixelSize) && specs.make && specs.model) {
         const make = specs.make.toLowerCase();
         let dbSpecs = null;
 
