@@ -496,7 +496,8 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
         console.log('Processing uploaded image:', req.file.filename);
 
         const imagePath = req.file.path;
-        const planetaryRadius = parseFloat(req.body.planetaryRadius) || 6371008.7714;
+        // Default radius of red ball: 19.25/(2π) × 0.025 = 0.0765933164 meters
+        const planetaryRadius = parseFloat(req.body.planetaryRadius) || 0.0765933164;
 
         // Debug EXIF data immediately after upload
         await debugEXIFData(imagePath);
@@ -611,7 +612,8 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
         const imagePath = req.file.path;
         const focalLength = parseFloat(req.body.focalLength);
         const pixelSize = parseFloat(req.body.pixelSize);
-        const planetaryRadius = parseFloat(req.body.planetaryRadius) || 6371008.7714;
+        // Default radius of red ball: 19.25/(2π) × 0.025 = 0.0765933164 meters
+        const planetaryRadius = parseFloat(req.body.planetaryRadius) || 0.0765933164;
 
         // Debug EXIF data immediately after upload
         await debugEXIFData(imagePath);

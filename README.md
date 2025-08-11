@@ -11,6 +11,55 @@ This web application allows users to upload pictures or take photos with their p
 - 🔍 **EXIF data extraction** - Automatically extracts camera specifications
 - 📏 **Distance calculation** - Integrates with FOUND binary for precise measurements
 - 🎨 **Modern UI** - Clean, responsive design optimized for all devices
+- 🤖 **Adaptive Edge Detection** - Automatically selects optimal algorithms based on image source
+
+## Edge Detection Algorithms
+
+The application uses intelligent edge detection that adapts based on the image source:
+
+### Color-Based Detection (Phone Camera Photos)
+When users take photos directly with their phone camera, the system automatically uses an advanced color-based edge detection algorithm. This method:
+
+- **Detects multiple color ranges** in HSV color space (red, blue, green, brown/orange)
+- **Uses morphological operations** to clean and refine detected regions
+- **Optimized for objects with distinct colors** like planetary bodies or colored objects
+- **Example use case**: Detecting a red ball or Mars-like planetary surface
+
+**Red Ball Detection Example:**
+```python
+# The algorithm can detect red objects by creating HSV masks:
+# Red hue spans around 0° and 180° in HSV color space
+lower_red1 = np.array([0, 120, 70])    # Lower red range
+upper_red1 = np.array([10, 255, 255])
+lower_red2 = np.array([170, 120, 70])  # Upper red range  
+upper_red2 = np.array([180, 255, 255])
+```
+
+This method excels at detecting objects like:
+- 🔴 Red planetary bodies (Mars-like surfaces)
+- 🔵 Blue atmospheric features
+- 🟢 Green vegetation or terrain
+- 🟤 Brown/orange geological features
+
+### Canny Edge Detection (Uploaded Images)
+For uploaded images (non-phone camera sources), the system uses traditional Canny edge detection:
+
+- **Gradient-based edge detection** using intensity changes
+- **Optimized for general image types** including diagrams, charts, and processed images
+- **Reliable for geometric shapes** and clear boundaries
+- **Lower computational overhead** for batch processing
+
+### Automatic Algorithm Selection
+The system automatically detects phone camera photos using:
+- **EXIF metadata analysis** (camera make, model, GPS data)
+- **Image characteristics** (resolution, aspect ratio, color saturation)
+- **File format indicators** (.jpg, .heic from mobile devices)
+
+Phone camera indicators include:
+- Camera makes: iPhone, Samsung, Google Pixel, Huawei, etc.
+- Typical focal lengths: 1-10mm (mobile camera range)
+- High resolution with good color saturation
+- Presence of GPS metadata
 
 ## Technology Stack
 - **Frontend**: HTML5, CSS3, JavaScript (Vanilla)
@@ -106,7 +155,10 @@ found-website/
 │   └── index.html          # Frontend interface
 ├── uploads/                # Uploaded images (created automatically)
 ├── server.js              # Express server and API
-├── package.json           # Dependencies and scripts
+├── edge_detection.py       # Adaptive edge detection algorithms
+├── reader.py              # EXIF data extraction utilities
+├── package.json           # Node.js dependencies and scripts
+├── requirements.txt       # Python dependencies
 ├── render.yaml            # Render.com deployment config
 ├── .gitignore            # Git ignore rules
 └── README.md             # This file
