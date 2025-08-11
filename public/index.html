@@ -288,6 +288,36 @@
                         </div>
                     </div>
                     
+                    <!-- Additional Camera Information -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                        <div>
+                            <label for="manualF35" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">35mm Equivalent (mm):</label>
+                            <input type="number" id="manualF35" step="0.1" min="1" max="200" 
+                                   style="width: 100%; padding: 8px; border: 1px solid #bdc3c7; border-radius: 4px;" 
+                                   placeholder="e.g., 24">
+                            <small style="color: #7f8c8d; font-size: 0.8em;">Optional</small>
+                        </div>
+                        <div>
+                            <label for="manualMake" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">Camera Make:</label>
+                            <select id="manualMake" onchange="updateModelDropdown()" 
+                                    style="width: 100%; padding: 8px; border: 1px solid #bdc3c7; border-radius: 4px;">
+                                <option value="">Select Make...</option>
+                                <option value="Apple">Apple</option>
+                                <option value="Samsung">Samsung</option>
+                                <option value="Google">Google</option>
+                                <option value="Xiaomi">Xiaomi</option>
+                                <option value="Huawei">Huawei</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="manualModel" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">Camera Model:</label>
+                            <select id="manualModel" 
+                                    style="width: 100%; padding: 8px; border: 1px solid #bdc3c7; border-radius: 4px;">
+                                <option value="">Select Make First...</option>
+                            </select>
+                        </div>
+                    </div>
+                    
                     <div style="margin-bottom: 15px;">
                         <label for="manualPlanetaryRadius" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">Planetary Radius (m):</label>
                         <input type="number" id="manualPlanetaryRadius" step="0.1" min="0" 
@@ -428,6 +458,10 @@
             document.getElementById('manualFocalLength').value = '';
             document.getElementById('manualPixelSize').value = '';
             document.getElementById('manualPlanetaryRadius').value = ''; // Reset manual planetary radius
+            document.getElementById('manualF35').value = ''; // Reset f35 equivalent
+            document.getElementById('manualMake').value = ''; // Reset camera make
+            document.getElementById('manualModel').value = ''; // Reset camera model
+            document.getElementById('manualModel').disabled = true; // Disable model dropdown
             
             // Show preview and extract EXIF data
             const reader = new FileReader();
@@ -737,6 +771,22 @@
             formData.append('focalLength', focalLength);
             formData.append('pixelSize', pixelSize);
             
+            // Add optional f35 equivalent focal length
+            const f35 = document.getElementById('manualF35').value;
+            if (f35) {
+                formData.append('f35', f35);
+            }
+            
+            // Add optional camera make and model
+            const make = document.getElementById('manualMake').value;
+            const model = document.getElementById('manualModel').value;
+            if (make) {
+                formData.append('cameraMake', make);
+            }
+            if (model) {
+                formData.append('cameraModel', model);
+            }
+            
             // Add planetary radius (manual input overrides global)
             const radius = getPlanetaryRadius(true);
             if (radius) {
@@ -782,6 +832,29 @@
             }
             if (result.cameraSpecs.pixelSize) {
                 document.getElementById('manualPixelSize').value = result.cameraSpecs.pixelSize;
+            }
+            
+            // Pre-fill camera information from EXIF if available
+            if (extractedEXIF) {
+                if (extractedEXIF.focalLengthIn35mm) {
+                    document.getElementById('manualF35').value = extractedEXIF.focalLengthIn35mm;
+                }
+                if (extractedEXIF.make) {
+                    document.getElementById('manualMake').value = extractedEXIF.make;
+                    // Update model dropdown and set model if available
+                    updateModelDropdown();
+                    if (extractedEXIF.model) {
+                        // Find full model name that includes the make
+                        const fullModel = `${extractedEXIF.make} ${extractedEXIF.model}`;
+                        const modelSelect = document.getElementById('manualModel');
+                        for (let option of modelSelect.options) {
+                            if (option.value === fullModel || option.value.includes(extractedEXIF.model)) {
+                                modelSelect.value = option.value;
+                                break;
+                            }
+                        }
+                    }
+                }
             }
             
             // Pre-fill planetary radius if available in result
@@ -930,6 +1003,62 @@
             const resultsSection = document.getElementById('resultsSection');
             resultsSection.innerHTML = `<div class="error">❌ Error: ${message}</div>`;
         }
+
+        // Phone database from reader.py for dropdowns
+        const phoneDatabase = {
+            "Apple": [
+                "Apple iPhone 14 Pro",
+                "Apple iPhone 14", 
+                "Apple iPhone 13 Pro",
+                "Apple iPhone 13"
+            ],
+            "Samsung": [
+                "Samsung Galaxy S23 Ultra",
+                "Samsung Galaxy S22",
+                "Samsung Galaxy S21"
+            ],
+            "Google": [
+                "Google Pixel 7 Pro",
+                "Google Pixel 7",
+                "Google Pixel 6"
+            ],
+            "Xiaomi": [
+                "Xiaomi 13 Ultra"
+            ],
+            "Huawei": [
+                "Huawei P50 Pro"
+            ]
+        };
+
+        function updateModelDropdown() {
+            const makeSelect = document.getElementById('manualMake');
+            const modelSelect = document.getElementById('manualModel');
+            const selectedMake = makeSelect.value;
+            
+            // Clear existing options
+            modelSelect.innerHTML = '<option value="">Select Model...</option>';
+            
+            if (selectedMake && phoneDatabase[selectedMake]) {
+                phoneDatabase[selectedMake].forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model;
+                    option.textContent = model;
+                    modelSelect.appendChild(option);
+                });
+                modelSelect.disabled = false;
+            } else {
+                modelSelect.innerHTML = '<option value="">Select Make First...</option>';
+                modelSelect.disabled = true;
+            }
+        }
+
+        // Initialize model dropdown as disabled
+        document.addEventListener('DOMContentLoaded', function() {
+            const modelSelect = document.getElementById('manualModel');
+            if (modelSelect) {
+                modelSelect.disabled = true;
+            }
+        });
     </script>
 </body>
 </html>
