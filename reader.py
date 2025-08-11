@@ -126,10 +126,38 @@ def get_pixel_size_from_db(camera_model, lens_type="main"):
     return None
 
 def get_exif_f35(exif_data):
-    """Extract 35mm equivalent focal length from EXIF data"""
+    """Extract 35mm equivalent focal length from EXIF data with device-specific field priorities"""
     if exif_data is None:
         return None
     
+    # Check if this is a Samsung device first
+    make_field = exif_data.get('Image Make')
+    make_str = str(make_field).strip().lower() if make_field else ""
+    
+    # Samsung devices prioritize FocalLengthIn35mmFormat
+    if 'samsung' in make_str:
+        samsung_fields = [
+            'EXIF FocalLengthIn35mmFormat',
+            'FocalLengthIn35mmFormat',
+            'EXIF FocalLengthIn35mmFilm',  # fallback
+            'FocalLengthIn35mmFilm'
+        ]
+        
+        for field in samsung_fields:
+            if field in exif_data:
+                value = exif_data[field]
+                if hasattr(value, 'values') and len(value.values) > 0:
+                    try:
+                        result = float(value.values[0])
+                        print(f"DEBUG: Samsung f35 extracted from {field}: {result}")
+                        return result
+                    except (ValueError, TypeError):
+                        continue
+                elif isinstance(value, (int, float)):
+                    print(f"DEBUG: Samsung f35 extracted from {field}: {float(value)}")
+                    return float(value)
+    
+    # Standard field order for all other devices
     possible_fields = [
         'EXIF FocalLengthIn35mmFilm',
         'FocalLengthIn35mmFormat',
@@ -229,7 +257,7 @@ def process_image(image_path):
         f35_from_exif = get_exif_f35(exif_tags)
         result["f35_focal_length_mm"] = f35_from_exif
         
-        # Enhanced debugging for Google Pixel devices
+        # Enhanced debugging for Google Pixel and Samsung devices
         if full_model and ('Google' in str(full_model) or 'Pixel' in str(full_model)):
             print(f"DEBUG: Google Pixel device detected: {full_model}")
             print("DEBUG: Available EXIF fields:")
@@ -237,10 +265,16 @@ def process_image(image_path):
                 if 'focal' in key.lower() or '35' in key.lower() or 'equiv' in key.lower():
                     print(f"  {key}: {exif_tags[key]}")
             print(f"DEBUG: Extracted f35: {f35_from_exif}")
+        elif full_model and ('Samsung' in str(full_model) or 'Galaxy' in str(full_model)):
+            print(f"DEBUG: Samsung device detected: {full_model}")
+            print("DEBUG: Available EXIF fields (Samsung prioritizes FocalLengthIn35mmFormat):")
+            for key in sorted(exif_tags.keys()):
+                if 'focal' in key.lower() or '35' in key.lower() or 'equiv' in key.lower():
+                    print(f"  {key}: {exif_tags[key]}")
+            print(f"DEBUG: Extracted f35: {f35_from_exif}")
         
         # Get actual focal length from EXIF
         actual_focal = get_actual_focal_length(exif_tags)
-        result["actual_focal_length_mm"] = actual_focal
         
         # Determine likely lens type based on focal length
         lens_type = determine_lens_type_from_f35(f35_from_exif)
@@ -250,8 +284,8 @@ def process_image(image_path):
         pixel_size_um = get_pixel_size_from_db(full_model, lens_type)
         result["pixel_size_um"] = pixel_size_um
         
-        # If we don't have actual focal length but have f35, try to calculate it
-        if not actual_focal and f35_from_exif and pixel_size_um:
+        # PRIORITY: Always use calculated actual focal length from f35 when available
+        if f35_from_exif and pixel_size_um:
             # Estimate sensor diagonal based on pixel size and typical phone sensor sizes
             if pixel_size_um <= 1.5:  # Likely smartphone
                 d_sensor = 6.15  # mm (approximate for modern smartphones)
@@ -262,16 +296,29 @@ def process_image(image_path):
             calculated_focal = calculate_actual_focal_length(f35_from_exif, d_sensor, d_35)
             if calculated_focal:
                 result["actual_focal_length_mm"] = calculated_focal
+                print(f"DEBUG: Using calculated actual focal length from f35: {calculated_focal}mm (f35: {f35_from_exif}mm)")
+            else:
+                # Fallback to EXIF actual focal length if calculation fails
+                result["actual_focal_length_mm"] = actual_focal
+                print(f"DEBUG: f35 calculation failed, using EXIF actual focal length: {actual_focal}mm")
+        elif actual_focal:
+            # Use EXIF actual focal length when f35 is not available
+            result["actual_focal_length_mm"] = actual_focal
+            print(f"DEBUG: No f35 available, using EXIF actual focal length: {actual_focal}mm")
+        else:
+            # No focal length data available
+            result["actual_focal_length_mm"] = None
+            print("DEBUG: No focal length data available (neither f35 nor actual)")
         
-        # If we don't have f35 but have actual focal length, try to calculate f35
-        elif not f35_from_exif and actual_focal and pixel_size_um:
+        # If we don't have f35 but have actual focal length, try to calculate f35 (for reference only)
+        if not f35_from_exif and actual_focal and pixel_size_um:
             # Estimate sensor diagonal for Google Pixel devices
             if full_model and ('Google' in str(full_model) or 'Pixel' in str(full_model)):
                 d_sensor = 6.15  # mm (typical for Google Pixel phones)
                 d_35 = math.sqrt(36**2 + 24**2)  # ~43.27 mm
                 calculated_f35 = actual_focal * (d_35 / d_sensor)
                 result["f35_focal_length_mm"] = calculated_f35
-                print(f"DEBUG: Calculated f35 for Google Pixel: {calculated_f35}mm (from actual: {actual_focal}mm)")
+                print(f"DEBUG: Calculated f35 for reference: {calculated_f35}mm (from actual: {actual_focal}mm)")
         
         return result
         
