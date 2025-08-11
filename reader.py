@@ -1,364 +1,141 @@
-import os
-import sys
-import json
-from PIL import Image
-import exifread
 import math
 
-# smartphone_pixel_size_db.py
-# Pixel size in micrometers (µm)
+# Smartphone pixel size database
+# Pixel size in micrometers (µm) and sensor diagonal in mm
 # Values from manufacturer specs or trusted teardowns
 
 SMARTPHONE_PIXEL_SIZE_DB = {
     # Apple
     "Apple iPhone 14 Pro": {
-        "main": 1.22,           # 1.22 µm (48 MP sensor, binning to 2.44 µm)
-        "ultrawide": 1.4,       # 1.4 µm
-        "telephoto": 1.0        # 1.0 µm
+        "pixelSize": 1.22,           # 1.22 µm (48 MP sensor, binning to 2.44 µm)
+        "sensorDiagonal": 6.15       # mm (approximate for modern smartphones)
     },
     "Apple iPhone 14": {
-        "main": 1.9,            # 1.9 µm
-        "ultrawide": 1.4        # 1.4 µm
-        # no dedicated telephoto
+        "pixelSize": 1.9,            # 1.9 µm
+        "sensorDiagonal": 6.15
     },
     "Apple iPhone 13 Pro": {
-        "main": 1.9,            # 1.9 µm
-        "ultrawide": 1.0,       # 1.0 µm
-        "telephoto": 1.0        # 1.0 µm
+        "pixelSize": 1.9,            # 1.9 µm
+        "sensorDiagonal": 6.15
     },
     "Apple iPhone 13": {
-        "main": 1.7,            # 1.7 µm
-        "ultrawide": 1.0        # 1.0 µm
+        "pixelSize": 1.7,            # 1.7 µm
+        "sensorDiagonal": 6.15
     },
 
     # Samsung
     "Samsung Galaxy S23 Ultra": {
-        "main": 0.8,            # 0.8 µm (200 MP sensor)
-        "ultrawide": 1.4,       # 1.4 µm
-        "telephoto_3x": 1.12,   # 1.12 µm
-        "telephoto_10x": 1.12   # 1.12 µm
+        "pixelSize": 0.8,            # 0.8 µm (200 MP sensor)
+        "sensorDiagonal": 6.15
     },
     "Samsung Galaxy S22": {
-        "main": 1.08,           # 1.08 µm
-        "ultrawide": 1.4,       # 1.4 µm
-        "telephoto": 1.0        # 1.0 µm
+        "pixelSize": 1.08,           # 1.08 µm
+        "sensorDiagonal": 6.15
     },
     "Samsung Galaxy S21": {
-        "main": 1.8,            # 1.8 µm
-        "ultrawide": 1.4,       # 1.4 µm
-        "telephoto": 1.0        # 1.0 µm
+        "pixelSize": 1.8,            # 1.8 µm
+        "sensorDiagonal": 6.15
     },
 
     # Google
     "Google Pixel 7 Pro": {
-        "main": 1.2,            # 1.2 µm
-        "ultrawide": 1.25,      # 1.25 µm
-        "telephoto": 1.28       # 1.28 µm
+        "pixelSize": 1.2,            # 1.2 µm
+        "sensorDiagonal": 6.15
     },
     "Google Pixel 7": {
-        "main": 1.22,           # 1.22 µm
-        "ultrawide": 1.25       # 1.25 µm
+        "pixelSize": 1.22,           # 1.22 µm
+        "sensorDiagonal": 6.15
     },
     "Google Pixel 6": {
-        "main": 1.2,            # 1.2 µm
-        "ultrawide": 1.25       # 1.25 µm
-        # no dedicated telephoto
+        "pixelSize": 1.2,            # 1.2 µm
+        "sensorDiagonal": 6.15
     },
 
     # Xiaomi
     "Xiaomi 13 Ultra": {
-        "main": 1.6,            # 1.6 µm
-        "ultrawide": 1.12,      # 1.12 µm
-        "telephoto_3x": 1.6,    # same as main
-        "telephoto_5x": 1.12    # same as ultrawide
+        "pixelSize": 1.6,            # 1.6 µm
+        "sensorDiagonal": 6.15
     },
 
     # Huawei
     "Huawei P50 Pro": {
-        "main": 1.22,           # 1.22 µm
-        "ultrawide": 1.4,       # 1.4 µm
-        "telephoto": 1.12       # 1.12 µm
+        "pixelSize": 1.22,           # 1.22 µm
+        "sensorDiagonal": 6.15
     }
 }
 
-def get_exif_data(image_path):
-    """Extract EXIF data from image"""
-    try:
-        with open(image_path, 'rb') as f:
-            tags = exifread.process_file(f)
-        return tags
-    except Exception as e:
-        return None
-
-def get_camera_model(exif_tags):
-    """Extract camera make and model from EXIF data"""
-    if not exif_tags:
-        return None, None
-        
-    make = exif_tags.get('Image Make')
-    model = exif_tags.get('Image Model')
-    
-    make_str = str(make).strip() if make else None
-    model_str = str(model).strip() if model else None
-    
-    if make_str and model_str:
-        full_model = f"{make_str} {model_str}"
-        return make_str, model_str, full_model
-    
-    return make_str, model_str, None
-
-def get_pixel_size_from_db(camera_model, lens_type="main"):
-    """Get pixel size from the database based on camera model"""
-    if not camera_model:
-        return None
-    
-    # Try exact match first
-    if camera_model in SMARTPHONE_PIXEL_SIZE_DB:
-        camera_data = SMARTPHONE_PIXEL_SIZE_DB[camera_model]
-        return camera_data.get(lens_type, camera_data.get("main"))
-    
-    # Try partial match (in case EXIF has slightly different formatting)
-    for db_model in SMARTPHONE_PIXEL_SIZE_DB:
-        if camera_model.lower() in db_model.lower() or db_model.lower() in camera_model.lower():
-            camera_data = SMARTPHONE_PIXEL_SIZE_DB[db_model]
-            return camera_data.get(lens_type, camera_data.get("main"))
-    
-    return None
-
-def get_exif_f35(exif_data):
-    """Extract 35mm equivalent focal length from EXIF data with device-specific field priorities"""
-    if exif_data is None:
-        return None
-    
-    # Check if this is a Samsung device first
-    make_field = exif_data.get('Image Make')
-    make_str = str(make_field).strip().lower() if make_field else ""
-    
-    # Samsung devices prioritize FocalLengthIn35mmFormat
-    if 'samsung' in make_str:
-        samsung_fields = [
-            'EXIF FocalLengthIn35mmFormat',
-            'FocalLengthIn35mmFormat',
-            'EXIF FocalLengthIn35mmFilm',  # fallback
-            'FocalLengthIn35mmFilm'
-        ]
-        
-        for field in samsung_fields:
-            if field in exif_data:
-                value = exif_data[field]
-                if hasattr(value, 'values') and len(value.values) > 0:
-                    try:
-                        result = float(value.values[0])
-                        print(f"DEBUG: Samsung f35 extracted from {field}: {result}")
-                        return result
-                    except (ValueError, TypeError):
-                        continue
-                elif isinstance(value, (int, float)):
-                    print(f"DEBUG: Samsung f35 extracted from {field}: {float(value)}")
-                    return float(value)
-    
-    # Standard field order for all other devices
-    possible_fields = [
-        'EXIF FocalLengthIn35mmFilm',
-        'FocalLengthIn35mmFormat',
-        'FocalLengthIn35mmFilm', 
-        'FocalLength35mm',
-        'EquivalentFocalLength',
-        'FocalLengthIn35mmEquiv',
-        # Google Pixel specific variations
-        '35mmFocalLength',
-        '35mmEquivalent',
-        'CameraFocalLength',
-        'EXIF 35mmFocalLength',
-        'EXIF FocalLength35mm',
-        # Additional common variations
-        'FocalLengthEquivalent',
-        'Film35mmFocalLength'
-    ]
-    
-    for field in possible_fields:
-        if field in exif_data:
-            value = exif_data[field]
-            if hasattr(value, 'values') and len(value.values) > 0:
-                try:
-                    return float(value.values[0])
-                except (ValueError, TypeError):
-                    continue
-            elif isinstance(value, (int, float)):
-                return float(value)
-    return None
-
-def get_actual_focal_length(exif_data):
-    """Extract actual focal length from EXIF data"""
-    if exif_data is None:
-        return None
-    
-    focal_length_field = exif_data.get('EXIF FocalLength')
-    if focal_length_field:
-        if hasattr(focal_length_field, 'values') and len(focal_length_field.values) > 0:
-            try:
-                # Handle fractional values
-                if '/' in str(focal_length_field.values[0]):
-                    num, den = str(focal_length_field.values[0]).split('/')
-                    return float(num) / float(den)
-                else:
-                    return float(focal_length_field.values[0])
-            except (ValueError, TypeError):
-                pass
-    return None
-
 def calculate_actual_focal_length(f_35, d_sensor, d_35=math.sqrt(36**2 + 24**2)):
-    """Calculate actual focal length from 35mm equivalent"""
+    """
+    Calculate actual focal length from 35mm equivalent
+    
+    Args:
+        f_35 (float): 35mm equivalent focal length in mm
+        d_sensor (float): Sensor diagonal in mm
+        d_35 (float): Full frame sensor diagonal (default: ~43.27mm)
+    
+    Returns:
+        float: Actual focal length in mm, or None if calculation fails
+    """
     if f_35 and d_sensor:
         return f_35 * (d_sensor / d_35)
     return None
 
-def determine_lens_type_from_f35(f35):
-    """Determine likely lens type based on 35mm equivalent focal length"""
-    if f35 is None:
-        return "main"
+def get_camera_specs(make, model):
+    """
+    Get camera specifications from database
     
-    if f35 <= 18:
-        return "ultrawide"
-    elif f35 >= 70:
-        return "telephoto"
-    else:
-        return "main"
-
-def process_image(image_path):
-    """Process a single image and extract relevant information"""
-    result = {
-        "success": True,
-        "camera_make": None,
-        "camera_model": None,
-        "full_camera_model": None,
-        "pixel_size_um": None,
-        "actual_focal_length_mm": None,
-        "f35_focal_length_mm": None,
-        "lens_type": "main",
-        "error": None
-    }
+    Args:
+        make (str): Camera manufacturer
+        model (str): Camera model
     
-    try:
-        # Get EXIF data
-        exif_tags = get_exif_data(image_path)
-        
-        if exif_tags is None:
-            result["error"] = "No EXIF data found"
-            return result
-        
-        # Get camera model
-        make, model, full_model = get_camera_model(exif_tags)
-        result["camera_make"] = make
-        result["camera_model"] = model
-        result["full_camera_model"] = full_model
-        
-        # Get 35mm equivalent from EXIF
-        f35_from_exif = get_exif_f35(exif_tags)
-        result["f35_focal_length_mm"] = f35_from_exif
-        
-        # Enhanced debugging for Google Pixel and Samsung devices
-        if full_model and ('Google' in str(full_model) or 'Pixel' in str(full_model)):
-            print(f"DEBUG: Google Pixel device detected: {full_model}")
-            print("DEBUG: Available EXIF fields:")
-            for key in sorted(exif_tags.keys()):
-                if 'focal' in key.lower() or '35' in key.lower() or 'equiv' in key.lower():
-                    print(f"  {key}: {exif_tags[key]}")
-            print(f"DEBUG: Extracted f35: {f35_from_exif}")
-        elif full_model and ('Samsung' in str(full_model) or 'Galaxy' in str(full_model)):
-            print(f"DEBUG: Samsung device detected: {full_model}")
-            print("DEBUG: Available EXIF fields (Samsung prioritizes FocalLengthIn35mmFormat):")
-            for key in sorted(exif_tags.keys()):
-                if 'focal' in key.lower() or '35' in key.lower() or 'equiv' in key.lower():
-                    print(f"  {key}: {exif_tags[key]}")
-            print(f"DEBUG: Extracted f35: {f35_from_exif}")
-        
-        # Get actual focal length from EXIF
-        actual_focal = get_actual_focal_length(exif_tags)
-        
-        # Determine likely lens type based on focal length
-        lens_type = determine_lens_type_from_f35(f35_from_exif)
-        result["lens_type"] = lens_type
-        
-        # Get pixel size from database for the specific lens
-        pixel_size_um = get_pixel_size_from_db(full_model, lens_type)
-        result["pixel_size_um"] = pixel_size_um
-        
-        # PRIORITY: Always use calculated actual focal length from f35 when available
-        if f35_from_exif and pixel_size_um:
-            # Estimate sensor diagonal based on pixel size and typical phone sensor sizes
-            if pixel_size_um <= 1.5:  # Likely smartphone
-                d_sensor = 6.15  # mm (approximate for modern smartphones)
-            else:  # Likely larger sensor camera
-                d_sensor = 28.4  # mm (APS-C approximation)
-            
-            d_35 = math.sqrt(36**2 + 24**2)  # ~43.27 mm
-            calculated_focal = calculate_actual_focal_length(f35_from_exif, d_sensor, d_35)
-            if calculated_focal:
-                result["actual_focal_length_mm"] = calculated_focal
-                print(f"DEBUG: Using calculated actual focal length from f35: {calculated_focal}mm (f35: {f35_from_exif}mm)")
-            else:
-                # Fallback to EXIF actual focal length if calculation fails
-                result["actual_focal_length_mm"] = actual_focal
-                print(f"DEBUG: f35 calculation failed, using EXIF actual focal length: {actual_focal}mm")
-        elif actual_focal:
-            # Use EXIF actual focal length when f35 is not available
-            result["actual_focal_length_mm"] = actual_focal
-            print(f"DEBUG: No f35 available, using EXIF actual focal length: {actual_focal}mm")
-        else:
-            # No focal length data available
-            result["actual_focal_length_mm"] = None
-            print("DEBUG: No focal length data available (neither f35 nor actual)")
-        
-        # If we don't have f35 but have actual focal length, try to calculate f35 (for reference only)
-        if not f35_from_exif and actual_focal and pixel_size_um:
-            # Estimate sensor diagonal for Google Pixel devices
-            if full_model and ('Google' in str(full_model) or 'Pixel' in str(full_model)):
-                d_sensor = 6.15  # mm (typical for Google Pixel phones)
-                d_35 = math.sqrt(36**2 + 24**2)  # ~43.27 mm
-                calculated_f35 = actual_focal * (d_35 / d_sensor)
-                result["f35_focal_length_mm"] = calculated_f35
-                print(f"DEBUG: Calculated f35 for reference: {calculated_f35}mm (from actual: {actual_focal}mm)")
-        
-        return result
-        
-    except Exception as e:
-        result["success"] = False
-        result["error"] = str(e)
-        return result
+    Returns:
+        dict: Camera specifications or None if not found
+    """
+    if not make or not model:
+        return None
+    
+    full_model = f"{make} {model}"
+    
+    # Try exact match first
+    if full_model in SMARTPHONE_PIXEL_SIZE_DB:
+        return SMARTPHONE_PIXEL_SIZE_DB[full_model]
+    
+    # Try partial match
+    for db_model, specs in SMARTPHONE_PIXEL_SIZE_DB.items():
+        if (make.lower() in db_model.lower() and 
+            model.lower() in db_model.lower()):
+            return specs
+    
+    return None
 
 def main():
-    """Main function - can process single image from command line or all images in directory"""
-    if len(sys.argv) > 1:
-        # Process single image from command line argument
-        image_path = sys.argv[1]
-        if not os.path.exists(image_path):
-            print(json.dumps({"success": False, "error": f"Image file not found: {image_path}"}))
-            return
+    """
+    Simple command line interface for focal length calculation
+    Usage: python3 reader.py <f35> <sensor_diagonal>
+    """
+    import sys
+    
+    if len(sys.argv) < 3:
+        print("Usage: python3 reader.py <f35_mm> <sensor_diagonal_mm>")
+        print("Example: python3 reader.py 26 6.15")
+        return
+    
+    try:
+        f35 = float(sys.argv[1])
+        d_sensor = float(sys.argv[2])
         
-        result = process_image(image_path)
-        print(json.dumps(result))
-    else:
-        # Process all images in current directory (original behavior)
-        image_extensions = ['.jpg', '.jpeg', '.JPG', '.JPEG']
-        image_files = []
+        actual_focal = calculate_actual_focal_length(f35, d_sensor)
         
-        for file in os.listdir('.'):
-            if any(file.endswith(ext) for ext in image_extensions):
-                image_files.append(file)
-        
-        if not image_files:
-            print(json.dumps({"success": False, "error": "No image files found in current directory"}))
-            return
-        
-        # Process each image
-        results = []
-        for image_file in sorted(image_files):
-            result = process_image(image_file)
-            result["filename"] = image_file
-            results.append(result)
-        
-        print(json.dumps({"success": True, "images": results}))
+        if actual_focal:
+            print(f"Calculated actual focal length: {actual_focal:.3f}mm")
+            print(f"Input: f35={f35}mm, sensor_diagonal={d_sensor}mm")
+        else:
+            print("Error: Could not calculate focal length")
+            
+    except ValueError:
+        print("Error: Invalid numeric input")
+    except Exception as e:
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
     main()

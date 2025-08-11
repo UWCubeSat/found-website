@@ -272,6 +272,7 @@
                 <div id="manualInputSection" style="display: none; margin: 20px 0; padding: 20px; border: 2px solid #f39c12; border-radius: 10px; background-color: #fef9e7;">
                     <h4 style="color: #e67e22; margin-bottom: 15px;">📝 Manual Camera Specifications</h4>
                     <p style="color: #8e44ad; margin-bottom: 15px;">EXIF data incomplete. Please provide the following camera specifications:</p>
+                    <p style="color: #27ae60; margin-bottom: 15px; font-size: 0.9em;">💡 <strong>Tip:</strong> Select your phone make and model to auto-fill pixel size from the database!</p>
                     
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
                         <div>
@@ -280,11 +281,18 @@
                                    style="width: 100%; padding: 8px; border: 1px solid #bdc3c7; border-radius: 4px;" 
                                    placeholder="e.g., 26">
                         </div>
-                        <div>
+                        <div id="pixelSizeInputDiv">
                             <label for="manualPixelSize" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">Pixel Size (μm):</label>
                             <input type="number" id="manualPixelSize" step="0.01" min="0.1" max="50" 
                                    style="width: 100%; padding: 8px; border: 1px solid #bdc3c7; border-radius: 4px;" 
                                    placeholder="e.g., 1.4">
+                        </div>
+                        <div id="pixelSizeAutoDiv" style="display: none;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">Pixel Size (μm):</label>
+                            <div id="autoPixelSizeDisplay" style="width: 100%; padding: 8px; border: 1px solid #27ae60; border-radius: 4px; background-color: #e8f5e8; color: #27ae60; font-weight: bold;">
+                                Auto-detected from phone model
+                            </div>
+                            <small style="color: #27ae60; font-size: 0.8em;">✓ Retrieved from database</small>
                         </div>
                     </div>
                     
@@ -745,12 +753,15 @@
             
             // Add extracted EXIF data if available
             if (extractedEXIF) {
-                formData.append('exifData', JSON.stringify(extractedEXIF));
-                console.log('Sending EXIF data to server:', extractedEXIF);
+                if (extractedEXIF.make) formData.append('cameraMake', extractedEXIF.make);
+                if (extractedEXIF.model) formData.append('cameraModel', extractedEXIF.model);
+                if (extractedEXIF.focalLength) formData.append('focalLength', extractedEXIF.focalLength.toString());
+                if (extractedEXIF.focalLengthIn35mm) formData.append('f35', extractedEXIF.focalLengthIn35mm.toString());
+                console.log('Sending camera data from EXIF to server:', extractedEXIF);
             }
 
             try {
-                const response = await fetch('/api/upload', {
+                const response = await fetch('/api/calculate', {
                     method: 'POST',
                     body: formData
                 });
@@ -781,10 +792,11 @@
             }
 
             const focalLength = document.getElementById('manualFocalLength').value;
-            const pixelSize = document.getElementById('manualPixelSize').value;
+            const pixelSize = getEffectivePixelSize(); // Use new function to get either auto or manual pixel size
 
             if (!focalLength || !pixelSize) {
-                showError('Please enter both focal length and pixel size.');
+                const pixelSizeSource = document.getElementById('pixelSizeAutoDiv').style.display === 'block' ? 'phone model' : 'manual input';
+                showError(`Please enter focal length and ensure pixel size is available (${pixelSizeSource}).`);
                 return;
             }
 
@@ -800,7 +812,7 @@
             const formData = new FormData();
             formData.append('image', selectedFile);
             formData.append('focalLength', focalLength);
-            formData.append('pixelSize', pixelSize);
+            formData.append('pixelSize', pixelSize.toString());
             
             // Add optional f35 equivalent focal length
             const f35 = document.getElementById('manualF35').value;
@@ -823,15 +835,14 @@
             if (radius) {
                 formData.append('planetaryRadius', radius.toString());
             }
-            
-            // Add extracted EXIF data if available
-            if (extractedEXIF) {
-                formData.append('exifData', JSON.stringify(extractedEXIF));
-                console.log('Sending EXIF data to server (manual):', extractedEXIF);
-            }
+
+            // Log source of pixel size for debugging
+            const pixelSizeAutoDiv = document.getElementById('pixelSizeAutoDiv');
+            const pixelSizeSource = pixelSizeAutoDiv.style.display === 'block' ? 'phone database' : 'manual input';
+            console.log(`Using pixel size ${pixelSize} μm from ${pixelSizeSource}`);
 
             try {
-                const response = await fetch('/api/calculate-manual', {
+                const response = await fetch('/api/calculate', {
                     method: 'POST',
                     body: formData
                 });
@@ -857,6 +868,9 @@
             document.getElementById('autoCalculateSection').style.display = 'none';
             document.getElementById('manualInputSection').style.display = 'block';
 
+            // Reset pixel size input state
+            resetPixelSizeInput();
+
             // Pre-fill any available data
             if (result.cameraSpecs.focalLength) {
                 document.getElementById('manualFocalLength').value = result.cameraSpecs.focalLength;
@@ -871,16 +885,31 @@
                     document.getElementById('manualF35').value = extractedEXIF.focalLengthIn35mm;
                 }
                 if (extractedEXIF.make) {
-                    document.getElementById('manualMake').value = extractedEXIF.make;
-                    // Update model dropdown and set model if available
+                    // Set make dropdown
+                    const makeSelect = document.getElementById('manualMake');
+                    for (let option of makeSelect.options) {
+                        if (option.value === extractedEXIF.make || 
+                            option.value.toLowerCase().includes(extractedEXIF.make.toLowerCase())) {
+                            makeSelect.value = option.value;
+                            break;
+                        }
+                    }
+                    
+                    // Update model dropdown
                     updateModelDropdown();
+                    
                     if (extractedEXIF.model) {
-                        // Find full model name that includes the make
-                        const fullModel = `${extractedEXIF.make} ${extractedEXIF.model}`;
+                        // Set model dropdown and check for auto pixel size
                         const modelSelect = document.getElementById('manualModel');
+                        const fullModel = `${extractedEXIF.make} ${extractedEXIF.model}`;
+                        
                         for (let option of modelSelect.options) {
-                            if (option.value === fullModel || option.value.includes(extractedEXIF.model)) {
+                            if (option.value === fullModel || 
+                                option.value.includes(extractedEXIF.model) ||
+                                extractedEXIF.model.includes(option.value.replace(extractedEXIF.make + ' ', ''))) {
                                 modelSelect.value = option.value;
+                                // Trigger pixel size update
+                                updatePixelSizeFromModel();
                                 break;
                             }
                         }
@@ -974,7 +1003,11 @@
 
                 html += '<div class="result-item">';
                 html += '<span class="result-label">Focal Length:</span>';
-                html += `<span class="result-value">${result.cameraSpecs.focalLength || 'Unknown'} mm</span>`;
+                html += `<span class="result-value">${result.cameraSpecs.focalLength || 'Unknown'} mm`;
+                if (result.cameraSpecs.calculatedFromF35) {
+                    html += ' (calculated from f35)';
+                }
+                html += '</span>';
                 html += '</div>';
 
                 html += '<div class="result-item">';
@@ -1019,13 +1052,12 @@
         function getSourceDescription(source) {
             const descriptions = {
                 'manual': '📝 Manual Input',
-                'exif': '📷 EXIF Metadata',
+                'frontend': '� Frontend EXIF Reader',
+                'frontend+database': '� Frontend + 🗃️ Database',
                 'database': '🗃️ Camera Database',
-                'dimensions': '📐 Image Dimensions',
-                'exif+database': '📷 EXIF + Database',
-                'exif+dimensions': '📷 EXIF + Dimensions',
-                'database+dimensions': '🗃️ Database + Dimensions',
-                'exif+database+dimensions': '📷 EXIF + Database + Dimensions'
+                'dimensions': '� Image Dimensions',
+                'manual+database': '📝 Manual + 🗃️ Database (Pixel Size)',
+                'manual+manual': '📝 Full Manual Input'
             };
             return descriptions[source] || source;
         }
@@ -1035,30 +1067,30 @@
             resultsSection.innerHTML = `<div class="error">❌ Error: ${message}</div>`;
         }
 
-        // Phone database from reader.py for dropdowns
+        // Phone database from reader.py for dropdowns with pixel sizes
         const phoneDatabase = {
-            "Apple": [
-                "Apple iPhone 14 Pro",
-                "Apple iPhone 14", 
-                "Apple iPhone 13 Pro",
-                "Apple iPhone 13"
-            ],
-            "Samsung": [
-                "Samsung Galaxy S23 Ultra",
-                "Samsung Galaxy S22",
-                "Samsung Galaxy S21"
-            ],
-            "Google": [
-                "Google Pixel 7 Pro",
-                "Google Pixel 7",
-                "Google Pixel 6"
-            ],
-            "Xiaomi": [
-                "Xiaomi 13 Ultra"
-            ],
-            "Huawei": [
-                "Huawei P50 Pro"
-            ]
+            "Apple": {
+                "Apple iPhone 14 Pro": { pixelSize: 1.22 },
+                "Apple iPhone 14": { pixelSize: 1.9 },
+                "Apple iPhone 13 Pro": { pixelSize: 1.9 },
+                "Apple iPhone 13": { pixelSize: 1.7 }
+            },
+            "Samsung": {
+                "Samsung Galaxy S23 Ultra": { pixelSize: 0.8 },
+                "Samsung Galaxy S22": { pixelSize: 1.08 },
+                "Samsung Galaxy S21": { pixelSize: 1.8 }
+            },
+            "Google": {
+                "Google Pixel 7 Pro": { pixelSize: 1.2 },
+                "Google Pixel 7": { pixelSize: 1.22 },
+                "Google Pixel 6": { pixelSize: 1.2 }
+            },
+            "Xiaomi": {
+                "Xiaomi 13 Ultra": { pixelSize: 1.6 }
+            },
+            "Huawei": {
+                "Huawei P50 Pro": { pixelSize: 1.22 }
+            }
         };
 
         function updateModelDropdown() {
@@ -1069,18 +1101,80 @@
             // Clear existing options
             modelSelect.innerHTML = '<option value="">Select Model...</option>';
             
+            // Reset pixel size display
+            resetPixelSizeInput();
+            
             if (selectedMake && phoneDatabase[selectedMake]) {
-                phoneDatabase[selectedMake].forEach(model => {
+                Object.keys(phoneDatabase[selectedMake]).forEach(model => {
                     const option = document.createElement('option');
                     option.value = model;
                     option.textContent = model;
                     modelSelect.appendChild(option);
                 });
                 modelSelect.disabled = false;
+                
+                // Add change handler for model selection
+                modelSelect.onchange = updatePixelSizeFromModel;
             } else {
                 modelSelect.innerHTML = '<option value="">Select Make First...</option>';
                 modelSelect.disabled = true;
+                modelSelect.onchange = null;
             }
+        }
+
+        function updatePixelSizeFromModel() {
+            const makeSelect = document.getElementById('manualMake');
+            const modelSelect = document.getElementById('manualModel');
+            const selectedMake = makeSelect.value;
+            const selectedModel = modelSelect.value;
+            
+            if (selectedMake && selectedModel && phoneDatabase[selectedMake] && phoneDatabase[selectedMake][selectedModel]) {
+                const pixelSize = phoneDatabase[selectedMake][selectedModel].pixelSize;
+                showAutoPixelSize(pixelSize);
+            } else {
+                resetPixelSizeInput();
+            }
+        }
+
+        function showAutoPixelSize(pixelSize) {
+            const pixelSizeInputDiv = document.getElementById('pixelSizeInputDiv');
+            const pixelSizeAutoDiv = document.getElementById('pixelSizeAutoDiv');
+            const autoPixelSizeDisplay = document.getElementById('autoPixelSizeDisplay');
+            
+            // Hide manual input, show auto display
+            pixelSizeInputDiv.style.display = 'none';
+            pixelSizeAutoDiv.style.display = 'block';
+            autoPixelSizeDisplay.textContent = `${pixelSize} μm (from ${document.getElementById('manualModel').value})`;
+            
+            console.log(`Auto-detected pixel size: ${pixelSize} μm for ${document.getElementById('manualModel').value}`);
+        }
+
+        function resetPixelSizeInput() {
+            const pixelSizeInputDiv = document.getElementById('pixelSizeInputDiv');
+            const pixelSizeAutoDiv = document.getElementById('pixelSizeAutoDiv');
+            
+            // Show manual input, hide auto display
+            pixelSizeInputDiv.style.display = 'block';
+            pixelSizeAutoDiv.style.display = 'none';
+            
+            // Clear manual input
+            document.getElementById('manualPixelSize').value = '';
+        }
+
+        function getEffectivePixelSize() {
+            const makeSelect = document.getElementById('manualMake');
+            const modelSelect = document.getElementById('manualModel');
+            const selectedMake = makeSelect.value;
+            const selectedModel = modelSelect.value;
+            
+            // Check if we have auto-detected pixel size from make/model
+            if (selectedMake && selectedModel && phoneDatabase[selectedMake] && phoneDatabase[selectedMake][selectedModel]) {
+                return phoneDatabase[selectedMake][selectedModel].pixelSize;
+            }
+            
+            // Fall back to manual input
+            const manualPixelSize = document.getElementById('manualPixelSize').value;
+            return manualPixelSize ? parseFloat(manualPixelSize) : null;
         }
 
         // Initialize model dropdown as disabled
