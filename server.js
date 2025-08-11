@@ -23,7 +23,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Configure multer for file uploads
+// Configure multer for file uploads with EXIF preservation
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         cb(null, uploadsDir);
@@ -40,8 +40,15 @@ const upload = multer({
     limits: {
         fileSize: 50 * 1024 * 1024 // 50MB limit
     },
+    preservePath: false,
+    // Ensure we don't modify the file during upload and log details
     fileFilter: (req, file, cb) => {
         if (file.mimetype.startsWith('image/')) {
+            console.log('Uploading image:', {
+                originalname: file.originalname,
+                mimetype: file.mimetype,
+                encoding: file.encoding
+            });
             cb(null, true);
         } else {
             cb(new Error('Only image files are allowed!'), false);
@@ -76,7 +83,55 @@ const cameraDatabase = {
     'default': { focalLength: 26, pixelSize: 1.4 }
 };
 
-// Helper function to run Python reader script for enhanced EXIF extraction
+// Helper function to debug EXIF data in uploaded files
+async function debugEXIFData(imagePath) {
+    console.log('=== EXIF Debug for:', path.basename(imagePath), '===');
+    
+    try {
+        // Check file size and basic info
+        const stats = fs.statSync(imagePath);
+        console.log('File size:', stats.size, 'bytes');
+        
+        // Try exifr (current method)
+        const exifrData = await exifr.parse(imagePath, { 
+            ifd0: true, 
+            exif: true,
+            gps: false 
+        });
+        
+        if (exifrData) {
+            console.log('EXIFR found data:', {
+                Make: exifrData.Make,
+                Model: exifrData.Model,
+                FocalLength: exifrData.FocalLength,
+                FocalLengthIn35mmFormat: exifrData.FocalLengthIn35mmFormat,
+                ImageWidth: exifrData.ImageWidth || exifrData.ExifImageWidth,
+                ImageHeight: exifrData.ImageHeight || exifrData.ExifImageHeight,
+                totalFields: Object.keys(exifrData).length
+            });
+        } else {
+            console.log('EXIFR: No EXIF data found');
+        }
+        
+        // Try reader.py for comparison
+        try {
+            const readerResult = await runReaderScript(imagePath);
+            console.log('Reader.py found:', {
+                cameraMake: readerResult.cameraMake,
+                cameraModel: readerResult.cameraModel,
+                pixelSize: readerResult.pixelSize,
+                focalLength: readerResult.focalLength
+            });
+        } catch (error) {
+            console.log('Reader.py failed:', error.message);
+        }
+        
+    } catch (error) {
+        console.log('EXIF debug error:', error.message);
+    }
+    
+    console.log('=== End EXIF Debug ===');
+}
 function runReaderScript(imagePath) {
     return new Promise((resolve, reject) => {
         const pythonProcess = spawn('python3', ['reader.py', imagePath], {
@@ -443,6 +498,9 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
         const imagePath = req.file.path;
         const planetaryRadius = parseFloat(req.body.planetaryRadius) || 6371008.7714;
 
+        // Debug EXIF data immediately after upload
+        await debugEXIFData(imagePath);
+
         // Extract EXIF data
         let exifData = null;
         try {
@@ -554,6 +612,9 @@ app.post('/api/calculate-manual', upload.single('image'), async (req, res) => {
         const focalLength = parseFloat(req.body.focalLength);
         const pixelSize = parseFloat(req.body.pixelSize);
         const planetaryRadius = parseFloat(req.body.planetaryRadius) || 6371008.7714;
+
+        // Debug EXIF data immediately after upload
+        await debugEXIFData(imagePath);
 
         // Validate manual input
         if (!focalLength || !pixelSize || focalLength <= 0 || pixelSize <= 0) {

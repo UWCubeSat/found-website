@@ -403,6 +403,14 @@
 
             selectedFile = file;
             
+            // Debug: Log file details for EXIF troubleshooting
+            console.log('Client-side file details:', {
+                name: file.name,
+                type: file.type,
+                size: file.size,
+                lastModified: new Date(file.lastModified)
+            });
+            
             // Reset form state
             document.getElementById('manualInputSection').style.display = 'none';
             document.getElementById('autoCalculateSection').style.display = 'block';
